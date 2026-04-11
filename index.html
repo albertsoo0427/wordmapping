@@ -1,0 +1,1186 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WordMap — 단어 맵핑</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap');
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --surface2: #1a1a26;
+    --border: #2a2a3d;
+    --accent: #7b6ef6;
+    --accent2: #ef6c9a;
+    --accent3: #6cf0c2;
+    --text: #e8e8f0;
+    --text-dim: #6b6b85;
+    --word-bg: #1e1e2e;
+    --word-border: #3a3a55;
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    font-family: 'DM Mono', monospace;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  /* NAV */
+  #nav {
+    position: fixed; top:0; left:0; right:0; z-index:100;
+    height: 52px;
+    background: rgba(10,10,15,0.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px;
+  }
+  .nav-logo {
+    font-family: 'Syne', sans-serif;
+    font-size: 18px; font-weight: 800;
+    letter-spacing: -0.5px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .nav-tabs { display:flex; gap:4px; }
+  .nav-tab {
+    padding: 6px 16px; border-radius: 6px;
+    font-family: 'DM Mono', monospace; font-size: 12px;
+    cursor: pointer; border: 1px solid transparent;
+    transition: all 0.2s; color: var(--text-dim);
+    background: transparent;
+  }
+  .nav-tab.active {
+    background: var(--surface2); border-color: var(--border);
+    color: var(--text);
+  }
+  .nav-tab:hover:not(.active) { color: var(--text); }
+
+  /* PAGES */
+  .page { position:fixed; inset:52px 0 0 0; display:none; }
+  .page.active { display:flex; flex-direction:column; }
+
+  /* ========== 2D PAGE ========== */
+  #toolbar-2d {
+    position: absolute; top:12px; left:12px; right:12px; z-index:10;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    pointer-events: none;
+  }
+  .tb-group { display:flex; gap:6px; align-items:center; pointer-events:all; flex-wrap:wrap; }
+
+  .btn {
+    font-family: 'DM Mono', monospace; font-size: 11px;
+    padding: 6px 12px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--border);
+    background: rgba(18,18,26,0.9); color: var(--text);
+    transition: all 0.15s; white-space:nowrap;
+    backdrop-filter: blur(8px);
+  }
+  .btn:hover { background: var(--surface2); border-color: var(--accent); }
+  .btn.active { background: var(--accent); border-color: var(--accent); color:#fff; }
+  .btn.danger:hover { border-color: var(--accent2); color: var(--accent2); }
+  .btn.success { background: var(--accent3); border-color: var(--accent3); color:#000; }
+  .btn.success:hover { opacity:0.85; }
+
+  .group-select {
+    font-family: 'DM Mono', monospace; font-size: 11px;
+    padding: 6px 10px; border-radius: 6px;
+    border: 1px solid var(--border);
+    background: rgba(18,18,26,0.9); color: var(--text);
+    cursor: pointer; outline:none;
+    backdrop-filter: blur(8px);
+  }
+  .group-select option { background: var(--surface); }
+
+  /* CANVAS */
+  #canvas-2d {
+    flex:1; position:relative; overflow:hidden; cursor:default;
+  }
+  #svg-2d {
+    position:absolute; inset:0; width:100%; height:100%;
+    pointer-events:none;
+  }
+  #svg-2d.connect-active { pointer-events:all; }
+
+  /* WORD NODES */
+  .word-node {
+    position: absolute;
+    padding: 7px 13px;
+    background: var(--word-bg);
+    border: 1px solid var(--word-border);
+    border-radius: 8px;
+    font-size: 13px; cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+    transform: translate(-50%, -50%);
+    white-space: nowrap;
+    z-index: 2;
+  }
+  .word-node:hover { border-color: var(--accent); box-shadow: 0 0 12px rgba(123,110,246,0.2); }
+  .word-node.selected { border-color: var(--accent2); box-shadow: 0 0 16px rgba(239,108,154,0.3); }
+  .word-node.connect-first { border-color: var(--accent3); box-shadow: 0 0 16px rgba(108,240,194,0.3); }
+
+  /* color dots by group */
+  .word-node::before {
+    content:'';
+    display:inline-block;
+    width:6px; height:6px;
+    border-radius:50%;
+    margin-right:6px;
+    background: var(--group-color, var(--accent));
+    vertical-align:middle;
+  }
+
+  /* EDGE lines */
+  .edge-line { stroke: var(--accent); stroke-width:1.5; opacity:0.5; fill:none; cursor:pointer; }
+  .edge-line:hover { opacity:1; stroke: var(--accent2); }
+  .edge-line-3d { stroke: var(--accent2); stroke-width:1; opacity:0.35; fill:none; stroke-dasharray:4,4; }
+
+  /* ========== TOOLBAR RIGHT ========== */
+  .mode-btn { position:relative; }
+  .mode-label {
+    position:absolute; right:0; top:calc(100% + 4px);
+    font-size:9px; color:var(--text-dim); white-space:nowrap;
+    text-align:right;
+  }
+
+  /* ========== 3D PAGE ========== */
+  #canvas-3d {
+    flex:1; position:relative; overflow:hidden;
+    background: var(--bg);
+    cursor: grab;
+  }
+  #canvas-3d.grabbing { cursor: grabbing; }
+
+  #toolbar-3d {
+    position: absolute; top:12px; left:12px; right:12px; z-index:10;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    pointer-events: none;
+  }
+
+  /* Layer panel */
+  #layer-panel {
+    position: absolute; left:12px; bottom:16px; z-index:10;
+    background: rgba(18,18,26,0.92); border:1px solid var(--border);
+    border-radius:10px; padding:12px; min-width:160px;
+    backdrop-filter: blur(12px);
+  }
+  .layer-panel-title {
+    font-size:10px; color:var(--text-dim); letter-spacing:.08em;
+    text-transform:uppercase; margin-bottom:8px;
+  }
+  .layer-item {
+    display:flex; align-items:center; gap:8px;
+    padding:5px 6px; border-radius:5px; cursor:pointer;
+    transition: background 0.15s; font-size:12px;
+    margin-bottom:2px;
+  }
+  .layer-item:hover { background: var(--surface2); }
+  .layer-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+  .layer-eye { margin-left:auto; font-size:12px; opacity:0.6; }
+  .layer-item.hidden .layer-eye { opacity:0.2; }
+  .layer-item.hidden .layer-dot { opacity:0.2; }
+  .layer-item.hidden span { opacity:0.3; }
+
+  /* Distance slider */
+  #dist-control {
+    position: absolute; right:12px; bottom:16px; z-index:10;
+    background: rgba(18,18,26,0.92); border:1px solid var(--border);
+    border-radius:10px; padding:12px 14px;
+    backdrop-filter: blur(12px); min-width:160px;
+  }
+  .dist-label { font-size:10px; color:var(--text-dim); letter-spacing:.08em; text-transform:uppercase; margin-bottom:8px; }
+  #dist-slider {
+    width:100%; accent-color: var(--accent);
+  }
+
+  /* 3D canvas svg */
+  #svg-3d {
+    position:absolute; inset:0; width:100%; height:100%;
+    pointer-events:none;
+  }
+  #svg-3d.connect-active { pointer-events:all; }
+
+  /* 3d word nodes */
+  .word-node-3d {
+    position: absolute;
+    padding: 6px 11px;
+    border-radius: 7px;
+    font-size: 12px; cursor: pointer;
+    border: 1px solid var(--word-border);
+    background: rgba(30,30,46,0.85);
+    backdrop-filter: blur(4px);
+    transform: translate(-50%, -50%);
+    white-space: nowrap;
+    transition: border-color 0.15s;
+    z-index:2;
+  }
+  .word-node-3d::before {
+    content:'';
+    display:inline-block;
+    width:5px; height:5px;
+    border-radius:50%;
+    margin-right:5px;
+    background: var(--group-color, var(--accent));
+    vertical-align:middle;
+  }
+  .word-node-3d:hover { border-color: var(--accent); }
+  .word-node-3d.selected { border-color: var(--accent2); }
+  .word-node-3d.connect-first { border-color: var(--accent3); }
+
+  /* layer plane */
+  .layer-plane {
+    position: absolute;
+    border-radius: 4px;
+    pointer-events: none;
+  }
+
+  /* Info toast */
+  #toast {
+    position:fixed; bottom:20px; left:50%; transform:translateX(-50%) translateY(20px);
+    background: var(--surface2); border:1px solid var(--border);
+    border-radius:8px; padding:8px 16px; font-size:11px; color:var(--text-dim);
+    z-index:999; opacity:0; transition: all 0.3s; pointer-events:none;
+  }
+  #toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+  /* Modal */
+  .modal-overlay {
+    position:fixed; inset:0; z-index:200;
+    background: rgba(0,0,0,0.6); backdrop-filter:blur(4px);
+    display:flex; align-items:center; justify-content:center;
+    opacity:0; pointer-events:none; transition:opacity 0.2s;
+  }
+  .modal-overlay.open { opacity:1; pointer-events:all; }
+  .modal {
+    background: var(--surface); border:1px solid var(--border);
+    border-radius:12px; padding:24px; min-width:280px;
+    display:flex; flex-direction:column; gap:12px;
+  }
+  .modal h3 { font-family:'Syne',sans-serif; font-size:16px; font-weight:700; }
+  .modal input {
+    font-family:'DM Mono',monospace; font-size:13px;
+    padding:8px 12px; border-radius:6px;
+    border:1px solid var(--border); background:var(--bg);
+    color:var(--text); outline:none; width:100%;
+  }
+  .modal input:focus { border-color:var(--accent); }
+  .modal-btns { display:flex; gap:8px; justify-content:flex-end; }
+
+  /* Hint */
+  .hint {
+    position:absolute; bottom:16px; left:50%; transform:translateX(-50%);
+    font-size:10px; color:var(--text-dim); letter-spacing:.05em;
+    pointer-events:none; z-index:5;
+    text-align:center; white-space:nowrap;
+  }
+
+  /* Grid bg */
+  #canvas-2d::before, #canvas-3d::before {
+    content:'';
+    position:absolute; inset:0;
+    background-image:
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 40px 40px;
+    opacity:0.18;
+    pointer-events:none;
+  }
+
+  /* separator */
+  .sep { width:1px; height:20px; background:var(--border); margin:0 4px; }
+
+  /* Multi-select lasso box */
+  #lasso-box {
+    position: absolute; border: 1.5px dashed var(--accent2);
+    background: rgba(239,108,154,0.06); border-radius: 3px;
+    pointer-events: none; z-index: 8; display:none;
+  }
+  .word-node.multi-selected {
+    border-color: var(--accent2) !important;
+    box-shadow: 0 0 14px rgba(239,108,154,0.35) !important;
+    background: rgba(239,108,154,0.08);
+  }
+  .word-node-3d.multi-selected {
+    border-color: var(--accent2) !important;
+    box-shadow: 0 0 12px rgba(239,108,154,0.3) !important;
+  }
+
+  /* Center cross marker */
+  .center-cross { pointer-events:none; }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<div id="nav">
+  <div class="nav-logo">WordMap</div>
+  <div class="nav-tabs">
+    <button class="nav-tab active" onclick="switchPage('2d')">2D 맵핑</button>
+    <button class="nav-tab" onclick="switchPage('3d')">3D 맵핑</button>
+  </div>
+</div>
+
+<!-- ========== 2D PAGE ========== -->
+<div class="page active" id="page-2d">
+  <div id="toolbar-2d">
+    <!-- LEFT -->
+    <div class="tb-group">
+      <select class="group-select" id="group-select" onchange="onGroupChange()"></select>
+      <button class="btn" onclick="openRenameModal()">이름 변경</button>
+      <button class="btn" onclick="createGroup()">+ 그룹</button>
+      <button class="btn danger" onclick="deleteGroup()">그룹 삭제</button>
+      <div class="sep"></div>
+      <button class="btn success" onclick="addWord2D()">+ 단어</button>
+    </div>
+    <!-- RIGHT -->
+    <div class="tb-group">
+      <button class="btn" id="btn-observe-2d" onclick="setMode2D('observe')">관찰 모드</button>
+      <button class="btn" id="btn-move-2d" onclick="setMode2D('move')">이동 모드</button>
+      <button class="btn" id="btn-connect-2d" onclick="setMode2D('connect')">연결 모드</button>
+      <button class="btn" id="btn-edit-2d" onclick="setMode2D('edit')">편집 모드</button>
+    </div>
+  </div>
+
+  <div id="canvas-2d">
+    <svg id="svg-2d" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="lasso-box"></div>
+    <div id="hint-2d" class="hint">관찰 모드: 드래그로 이동, 스크롤로 줌</div>
+  </div>
+</div>
+
+<!-- ========== 3D PAGE ========== -->
+<div class="page" id="page-3d">
+  <div id="toolbar-3d">
+    <div class="tb-group">
+      <span style="font-size:11px;color:var(--text-dim);">3D 레이어 맵</span>
+    </div>
+    <div class="tb-group">
+      <button class="btn" id="btn-observe-3d" onclick="setMode3D('observe')">관찰 모드</button>
+      <button class="btn" id="btn-connect-3d" onclick="setMode3D('connect')">연결 모드</button>
+      <button class="btn" id="btn-move-3d" onclick="setMode3D('move')">이동 모드</button>
+    </div>
+  </div>
+
+  <div id="canvas-3d">
+    <svg id="svg-3d" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="hint-3d" class="hint">관찰: 드래그 이동 · 스크롤 줌 · ⌘+드래그 회전</div>
+  </div>
+
+  <!-- Layer panel -->
+  <div id="layer-panel">
+    <div class="layer-panel-title">레이어</div>
+    <div id="layer-list"></div>
+  </div>
+
+  <!-- Distance control -->
+  <div id="dist-control">
+    <div class="dist-label">레이어 간격</div>
+    <input type="range" id="dist-slider" min="60" max="300" value="140" oninput="onDistChange()">
+    <div style="font-size:10px;color:var(--text-dim);margin-top:4px;" id="dist-val">140 px</div>
+  </div>
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal">
+    <h3 id="modal-title">그룹 이름 변경</h3>
+    <input type="text" id="modal-input" placeholder="이름 입력..." />
+    <div class="modal-btns">
+      <button class="btn" onclick="closeModal()">취소</button>
+      <button class="btn active" onclick="confirmModal()">확인</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+// ========================
+// STATE
+// ========================
+const GROUP_COLORS = ['#7b6ef6','#ef6c9a','#6cf0c2','#f0c26c','#6cb4f0','#f06c6c','#c26cf0','#6cf06c'];
+
+let state = {
+  groups: [], // {id, name, color, words:[{id,text,x,y}], connections2d:[{a,b}], hidden:false}
+  nextGid: 1,
+  nextWid: 1,
+  connections3d: [], // {aGid,aWid, bGid,bWid}
+};
+
+// 2D view state
+let v2 = { panX:0, panY:0, zoom:1, mode:'observe', connectFirst:null, selected: new Set() };
+// 3D view state  
+let v3 = { panX:0, panY:0, zoom:1, rotX:-20, rotY:0, mode:'observe', connectFirst:null, layerDist:140, selected: new Set() };
+
+// ========================
+// INIT
+// ========================
+function init() {
+  createGroup('그룹 A');
+  createGroup('그룹 B');
+  // sample words
+  addWordToGroup(0, '사랑', 320, 250);
+  addWordToGroup(0, '기억', 500, 180);
+  addWordToGroup(0, '시간', 420, 340);
+  addWordToGroup(1, '공간', 650, 260);
+  addWordToGroup(1, '빛', 720, 160);
+  state.groups[0].connections2d.push({a: state.groups[0].words[0].id, b: state.groups[0].words[1].id});
+  render2D(); render3D(); renderLayerPanel();
+}
+
+// ========================
+// GROUP MANAGEMENT
+// ========================
+function createGroup(name) {
+  const id = state.nextGid++;
+  state.groups.push({
+    id, name: name || `그룹 ${id}`,
+    color: GROUP_COLORS[(state.groups.length) % GROUP_COLORS.length],
+    words: [], connections2d: [], hidden: false
+  });
+  refreshGroupSelect(); render2D(); render3D(); renderLayerPanel();
+}
+
+function deleteGroup() {
+  if(state.groups.length <= 1) { showToast('최소 1개 그룹이 필요합니다.'); return; }
+  const sel = getSelectedGroup();
+  if(!sel) return;
+  state.groups = state.groups.filter(g=>g.id!==sel.id);
+  state.connections3d = state.connections3d.filter(c=>c.aGid!==sel.id&&c.bGid!==sel.id);
+  refreshGroupSelect(); render2D(); render3D(); renderLayerPanel();
+}
+
+function getSelectedGroup() {
+  const gid = parseInt(document.getElementById('group-select').value);
+  return state.groups.find(g=>g.id===gid);
+}
+
+function onGroupChange() { render2D(); }
+
+function refreshGroupSelect() {
+  const sel = document.getElementById('group-select');
+  const cur = sel.value;
+  sel.innerHTML = state.groups.map(g=>`<option value="${g.id}">${g.name}</option>`).join('');
+  if(state.groups.find(g=>g.id==cur)) sel.value=cur;
+}
+
+// ========================
+// MODAL
+// ========================
+let modalCallback = null;
+function openModal(title, val, cb) {
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-input').value = val||'';
+  modalCallback = cb;
+  document.getElementById('modal-overlay').classList.add('open');
+  setTimeout(()=>document.getElementById('modal-input').focus(),50);
+}
+function closeModal() {
+  document.getElementById('modal-overlay').classList.remove('open');
+  modalCallback=null;
+}
+function confirmModal() {
+  const v = document.getElementById('modal-input').value.trim();
+  if(v && modalCallback) modalCallback(v);
+  closeModal();
+}
+document.getElementById('modal-input').addEventListener('keydown',e=>{if(e.key==='Enter')confirmModal();if(e.key==='Escape')closeModal();});
+document.getElementById('modal-overlay').addEventListener('click',e=>{if(e.target===document.getElementById('modal-overlay'))closeModal();});
+
+function openRenameModal() {
+  const g = getSelectedGroup(); if(!g) return;
+  openModal('그룹 이름 변경', g.name, v=>{g.name=v; refreshGroupSelect(); renderLayerPanel(); render3D();});
+}
+
+// ========================
+// WORD MANAGEMENT
+// ========================
+function addWord2D() {
+  const g = getSelectedGroup(); if(!g) return;
+  openModal('새 단어 추가', '', v=>{
+    const cx = (canvasW()/2 - v2.panX)/v2.zoom + Math.random()*60-30;
+    const cy = (canvasH()/2 - v2.panY)/v2.zoom + Math.random()*60-30;
+    addWordToGroup(state.groups.indexOf(g), v, cx, cy);
+    render2D(); render3D(); renderLayerPanel();
+  });
+}
+
+function addWordToGroup(gi, text, x, y) {
+  const id = state.nextWid++;
+  state.groups[gi].words.push({id, text, x, y, x3:x, y3:y});
+}
+
+function canvasW() { return document.getElementById('canvas-2d').clientWidth; }
+function canvasH() { return document.getElementById('canvas-2d').clientHeight; }
+
+// ========================
+// 2D RENDER
+// ========================
+function render2D() {
+  const canvas = document.getElementById('canvas-2d');
+  const svg = document.getElementById('svg-2d');
+
+  // Remove old nodes
+  canvas.querySelectorAll('.word-node').forEach(n=>n.remove());
+  svg.innerHTML = '';
+
+  const svgNS = 'http://www.w3.org/2000/svg';
+
+  // Draw center crosshair per group
+  state.groups.forEach(g => {
+    if(g.hidden || g.words.length===0) return;
+    // centroid of words
+    const cx = g.words.reduce((s,w)=>s+w.x,0)/g.words.length;
+    const cy = g.words.reduce((s,w)=>s+w.y,0)/g.words.length;
+    const [sx,sy] = worldToScreen2D(cx,cy);
+    const r=10;
+    // outer ring
+    const circle = document.createElementNS(svgNS,'circle');
+    circle.setAttribute('cx',sx); circle.setAttribute('cy',sy);
+    circle.setAttribute('r',r); circle.setAttribute('fill','none');
+    circle.setAttribute('stroke',g.color); circle.setAttribute('stroke-width','1');
+    circle.setAttribute('opacity','0.5'); circle.setAttribute('class','center-cross');
+    svg.appendChild(circle);
+    // crosshairs
+    [[-r-4,0,-r+2,0],[r-2,0,r+4,0],[0,-r-4,0,-r+2],[0,r-2,0,r+4]].forEach(([x1,y1,x2,y2])=>{
+      const l=document.createElementNS(svgNS,'line');
+      l.setAttribute('x1',sx+x1); l.setAttribute('y1',sy+y1);
+      l.setAttribute('x2',sx+x2); l.setAttribute('y2',sy+y2);
+      l.setAttribute('stroke',g.color); l.setAttribute('stroke-width','1');
+      l.setAttribute('opacity','0.5'); l.setAttribute('class','center-cross');
+      svg.appendChild(l);
+    });
+    // dot
+    const dot=document.createElementNS(svgNS,'circle');
+    dot.setAttribute('cx',sx); dot.setAttribute('cy',sy);
+    dot.setAttribute('r',2); dot.setAttribute('fill',g.color);
+    dot.setAttribute('opacity','0.7'); dot.setAttribute('class','center-cross');
+    svg.appendChild(dot);
+  });
+
+  // Draw edges
+  state.groups.forEach(g => {
+    if(g.hidden) return;
+    g.connections2d.forEach(conn => {
+      const wa = g.words.find(w=>w.id===conn.a);
+      const wb = g.words.find(w=>w.id===conn.b);
+      if(!wa||!wb) return;
+      const [ax,ay] = worldToScreen2D(wa.x,wa.y);
+      const [bx,by] = worldToScreen2D(wb.x,wb.y);
+      const line = document.createElementNS(svgNS,'line');
+      line.setAttribute('x1',ax); line.setAttribute('y1',ay);
+      line.setAttribute('x2',bx); line.setAttribute('y2',by);
+      line.setAttribute('class','edge-line');
+      line.setAttribute('stroke', g.color);
+      line.dataset.gid = g.id;
+      line.dataset.a = conn.a; line.dataset.b = conn.b;
+      if(v2.mode==='connect') {
+        line.style.pointerEvents='all';
+        line.addEventListener('click',()=>removeConnection2D(g.id,conn.a,conn.b));
+      }
+      svg.appendChild(line);
+    });
+  });
+
+  // Draw 3D cross connections projected on 2D
+  state.connections3d.forEach(c=>{
+    const ga = state.groups.find(g=>g.id===c.aGid);
+    const gb = state.groups.find(g=>g.id===c.bGid);
+    if(!ga||!gb) return;
+    const wa = ga.words.find(w=>w.id===c.aWid);
+    const wb = gb.words.find(w=>w.id===c.bWid);
+    if(!wa||!wb) return;
+    const [ax,ay] = worldToScreen2D(wa.x,wa.y);
+    const [bx,by] = worldToScreen2D(wb.x,wb.y);
+    const line = document.createElementNS(svgNS,'line');
+    line.setAttribute('x1',ax); line.setAttribute('y1',ay);
+    line.setAttribute('x2',bx); line.setAttribute('y2',by);
+    line.setAttribute('class','edge-line-3d');
+    svg.appendChild(line);
+  });
+
+  // Draw nodes
+  state.groups.forEach(g => {
+    if(g.hidden) return;
+    g.words.forEach(w => {
+      const [sx,sy] = worldToScreen2D(w.x, w.y);
+      const el = document.createElement('div');
+      el.className = 'word-node';
+      if(v2.selected.has(w.id)) el.classList.add('multi-selected');
+      el.textContent = w.text;
+      el.style.left = sx+'px'; el.style.top = sy+'px';
+      el.style.setProperty('--group-color', g.color);
+      el.dataset.wid = w.id; el.dataset.gid = g.id;
+      el.style.fontSize = Math.max(9, 13*v2.zoom)+'px';
+
+      el.addEventListener('click', e=>handleWordClick2D(e, g, w));
+      el.addEventListener('mousedown', e=>startDrag2D(e, g, w));
+      el.addEventListener('dblclick', e=>{
+        if(v2.mode==='edit') editWord(g,w);
+      });
+      canvas.appendChild(el);
+    });
+  });
+}
+
+function worldToScreen2D(wx,wy) {
+  return [wx*v2.zoom + v2.panX, wy*v2.zoom + v2.panY];
+}
+function screenToWorld2D(sx,sy) {
+  return [(sx-v2.panX)/v2.zoom, (sy-v2.panY)/v2.zoom];
+}
+
+function handleWordClick2D(e, g, w) {
+  e.stopPropagation();
+  if(v2.mode==='move') {
+    if(e.shiftKey) {
+      // Shift-click: toggle individual selection
+      if(v2.selected.has(w.id)) v2.selected.delete(w.id);
+      else v2.selected.add(w.id);
+      render2D(); return;
+    } else if(!v2.selected.has(w.id)) {
+      // click on non-selected: clear and select just this one
+      v2.selected.clear();
+      render2D(); return;
+    }
+    return;
+  }
+  if(v2.mode==='connect') {
+    if(!v2.connectFirst) {
+      v2.connectFirst = {gid:g.id, wid:w.id};
+      showToast('두 번째 단어를 클릭하세요.');
+      render2D();
+    } else {
+      if(v2.connectFirst.wid === w.id && v2.connectFirst.gid === g.id) {
+        v2.connectFirst=null; render2D(); return;
+      }
+      // same group connection
+      if(v2.connectFirst.gid === g.id) {
+        const gg = state.groups.find(x=>x.id===g.id);
+        const exists = gg.connections2d.find(c=>(c.a===v2.connectFirst.wid&&c.b===w.id)||(c.b===v2.connectFirst.wid&&c.a===w.id));
+        if(exists) {
+          gg.connections2d = gg.connections2d.filter(c=>c!==exists);
+          showToast('연결 해제됨');
+        } else {
+          gg.connections2d.push({a:v2.connectFirst.wid, b:w.id});
+          showToast('연결됨');
+        }
+      } else {
+        // cross-group → 3D connection
+        const exists = state.connections3d.find(c=>
+          (c.aGid===v2.connectFirst.gid&&c.aWid===v2.connectFirst.wid&&c.bGid===g.id&&c.bWid===w.id)||
+          (c.bGid===v2.connectFirst.gid&&c.bWid===v2.connectFirst.wid&&c.aGid===g.id&&c.aWid===w.id)
+        );
+        if(exists) {
+          state.connections3d = state.connections3d.filter(c=>c!==exists);
+          showToast('3D 연결 해제됨');
+        } else {
+          state.connections3d.push({aGid:v2.connectFirst.gid,aWid:v2.connectFirst.wid,bGid:g.id,bWid:w.id});
+          showToast('3D 연결됨');
+        }
+      }
+      v2.connectFirst=null;
+      render2D(); render3D();
+    }
+  } else if(v2.mode==='edit') {
+    editWord(g,w);
+  }
+}
+
+function editWord(g,w) {
+  openModal('단어 편집', w.text, v=>{
+    w.text=v; render2D(); render3D();
+  });
+}
+
+function removeConnection2D(gid,a,b) {
+  const g = state.groups.find(x=>x.id===gid);
+  if(!g) return;
+  g.connections2d = g.connections2d.filter(c=>!(c.a===a&&c.b===b)&&!(c.a===b&&c.b===a));
+  render2D();
+}
+
+// ========================
+// 2D DRAG / PAN / ZOOM
+// ========================
+let drag2D = null;
+
+function startDrag2D(e, g, w) {
+  if(v2.mode!=='move') return;
+  e.preventDefault(); e.stopPropagation();
+
+  const isSelected = v2.selected.has(w.id);
+
+  // If dragging an unselected word without shift → select only this one and drag it
+  if(!isSelected && !e.shiftKey) {
+    v2.selected.clear();
+    v2.selected.add(w.id);
+    render2D();
+  } else if(!isSelected && e.shiftKey) {
+    v2.selected.add(w.id);
+    render2D();
+  }
+
+  // Collect all words in the selection with their originals
+  const dragSet = [];
+  state.groups.forEach(grp=>{
+    grp.words.forEach(word=>{
+      if(v2.selected.has(word.id)) dragSet.push({word, ox:word.x, oy:word.y});
+    });
+  });
+  // If nothing matched (edge case), just drag this word
+  if(dragSet.length===0) dragSet.push({word:w, ox:w.x, oy:w.y});
+
+  const startX=e.clientX, startY=e.clientY;
+
+  function onMove(ev) {
+    const dx=(ev.clientX-startX)/v2.zoom;
+    const dy=(ev.clientY-startY)/v2.zoom;
+    dragSet.forEach(({word,ox,oy})=>{
+      word.x=ox+dx; word.y=oy+dy;
+      word.x3=word.x; word.y3=word.y;
+    });
+    render2D(); render3D();
+  }
+  function onUp() {
+    document.removeEventListener('mousemove',onMove);
+    document.removeEventListener('mouseup',onUp);
+  }
+  document.addEventListener('mousemove',onMove);
+  document.addEventListener('mouseup',onUp);
+}
+
+// Lasso selection on canvas background
+const canvas2d = document.getElementById('canvas-2d');
+const lassoBox = document.getElementById('lasso-box');
+
+canvas2d.addEventListener('mousedown',e=>{
+  if(v2.mode==='observe') {
+    const startX=e.clientX,startY=e.clientY;
+    const origPX=v2.panX,origPY=v2.panY;
+    function onMove(ev) {
+      v2.panX=origPX+(ev.clientX-startX);
+      v2.panY=origPY+(ev.clientY-startY);
+      render2D();
+    }
+    function onUp(){document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);}
+    document.addEventListener('mousemove',onMove);
+    document.addEventListener('mouseup',onUp);
+    return;
+  }
+
+  if(v2.mode==='move') {
+    // Lasso drag on empty canvas
+    const rect=canvas2d.getBoundingClientRect();
+    const startX=e.clientX-rect.left, startY=e.clientY-rect.top;
+    let moved=false;
+
+    if(!e.shiftKey) v2.selected.clear();
+
+    lassoBox.style.display='none';
+
+    function onMove(ev) {
+      moved=true;
+      const curX=ev.clientX-rect.left, curY=ev.clientY-rect.top;
+      const lx=Math.min(startX,curX), ly=Math.min(startY,curY);
+      const lw=Math.abs(curX-startX), lh=Math.abs(curY-startY);
+      lassoBox.style.display='block';
+      lassoBox.style.left=lx+'px'; lassoBox.style.top=ly+'px';
+      lassoBox.style.width=lw+'px'; lassoBox.style.height=lh+'px';
+
+      // Compute world-space lasso rect
+      const [wx1,wy1]=screenToWorld2D(lx,ly);
+      const [wx2,wy2]=screenToWorld2D(lx+lw,ly+lh);
+
+      if(!e.shiftKey) v2.selected.clear();
+      state.groups.forEach(grp=>{
+        if(grp.hidden) return;
+        grp.words.forEach(word=>{
+          if(word.x>=wx1&&word.x<=wx2&&word.y>=wy1&&word.y<=wy2) v2.selected.add(word.id);
+        });
+      });
+      render2D();
+    }
+    function onUp(){
+      lassoBox.style.display='none';
+      document.removeEventListener('mousemove',onMove);
+      document.removeEventListener('mouseup',onUp);
+      if(!moved) { v2.selected.clear(); render2D(); }
+    }
+    document.addEventListener('mousemove',onMove);
+    document.addEventListener('mouseup',onUp);
+  }
+});
+canvas2d.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const rect=canvas2d.getBoundingClientRect();
+  const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  const dz=e.deltaY<0?1.1:0.9;
+  v2.panX=mx-(mx-v2.panX)*dz;
+  v2.panY=my-(my-v2.panY)*dz;
+  v2.zoom=Math.max(0.2,Math.min(4,v2.zoom*dz));
+  render2D();
+},{passive:false});
+
+// ========================
+// 2D MODE
+// ========================
+function setMode2D(m) {
+  v2.mode=m; v2.connectFirst=null; v2.selected.clear();
+  document.querySelectorAll('[id^=btn-][id$=-2d]').forEach(b=>b.classList.remove('active'));
+  document.getElementById('btn-'+m+'-2d')?.classList.add('active');
+  const hints={
+    observe:'관찰 모드: 드래그로 이동, 스크롤로 줌',
+    move:'이동 모드: 드래그로 범위 선택 · Shift+클릭으로 추가 선택 · 드래그로 이동',
+    connect:'연결 모드: 두 단어를 클릭하여 연결 (같은 그룹끼리는 2D, 다른 그룹끼리는 3D 연결)',
+    edit:'편집 모드: 단어를 클릭해서 수정'
+  };
+  document.getElementById('hint-2d').textContent = hints[m]||'';
+  render2D();
+}
+
+// ========================
+// 3D RENDER
+// ========================
+function render3D() {
+  const canvas = document.getElementById('canvas-3d');
+  const svg = document.getElementById('svg-3d');
+  canvas.querySelectorAll('.word-node-3d,.layer-plane').forEach(n=>n.remove());
+  svg.innerHTML='';
+  const svgNS='http://www.w3.org/2000/svg';
+  const W=canvas.clientWidth, H=canvas.clientHeight;
+  const cx=W/2+v3.panX, cy=H/2+v3.panY;
+
+  const rx = v3.rotX * Math.PI/180;
+  const ry = v3.rotY * Math.PI/180;
+
+  const visGroups = state.groups.filter(g=>!g.hidden);
+
+  function project(wx,wy,wz) {
+    // rotate around Y
+    let x1=wx*Math.cos(ry)+wz*Math.sin(ry);
+    let z1=-wx*Math.sin(ry)+wz*Math.cos(ry);
+    // rotate around X
+    let y2=wy*Math.cos(rx)-z1*Math.sin(rx);
+    let z2=wy*Math.sin(rx)+z1*Math.cos(rx);
+    const fov=600;
+    const scale=fov/(fov+z2+600);
+    return [cx+x1*v3.zoom*scale, cy+y2*v3.zoom*scale, scale];
+  }
+
+  const numLayers = visGroups.length;
+
+  // Draw layer planes + center cross
+  visGroups.forEach((g,li) => {
+    const wz = (li - (numLayers-1)/2) * v3.layerDist;
+    // four corners of plane
+    const size=280;
+    const corners=[[-size,-size,wz],[size,-size,wz],[size,size,wz],[-size,size,wz]];
+    const pts=corners.map(([x,y,z])=>project(x,y,z));
+    const poly=document.createElementNS(svgNS,'polygon');
+    poly.setAttribute('points',pts.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' '));
+    poly.setAttribute('fill', g.color+'18');
+    poly.setAttribute('stroke', g.color+'55');
+    poly.setAttribute('stroke-width','1');
+    svg.appendChild(poly);
+
+    // Center cross of this layer (centroid of words, or layer origin 0,0)
+    const hasCentroid = g.words.length>0;
+    const centX = hasCentroid ? g.words.reduce((s,w)=>s+w.x3,0)/g.words.length : 0;
+    const centY = hasCentroid ? g.words.reduce((s,w)=>s+w.y3,0)/g.words.length : 0;
+    const [ccx,ccy]=project(centX,centY,wz);
+    const cr=9;
+    // ring
+    const cCirc=document.createElementNS(svgNS,'circle');
+    cCirc.setAttribute('cx',ccx); cCirc.setAttribute('cy',ccy);
+    cCirc.setAttribute('r',cr); cCirc.setAttribute('fill','none');
+    cCirc.setAttribute('stroke',g.color); cCirc.setAttribute('stroke-width','1');
+    cCirc.setAttribute('opacity','0.55');
+    svg.appendChild(cCirc);
+    // arms
+    [[-cr-4,0,-cr+2,0],[cr-2,0,cr+4,0],[0,-cr-4,0,-cr+2],[0,cr-2,0,cr+4]].forEach(([x1,y1,x2,y2])=>{
+      const l=document.createElementNS(svgNS,'line');
+      l.setAttribute('x1',ccx+x1); l.setAttribute('y1',ccy+y1);
+      l.setAttribute('x2',ccx+x2); l.setAttribute('y2',ccy+y2);
+      l.setAttribute('stroke',g.color); l.setAttribute('stroke-width','1');
+      l.setAttribute('opacity','0.55');
+      svg.appendChild(l);
+    });
+    const cDot=document.createElementNS(svgNS,'circle');
+    cDot.setAttribute('cx',ccx); cDot.setAttribute('cy',ccy);
+    cDot.setAttribute('r',2); cDot.setAttribute('fill',g.color);
+    cDot.setAttribute('opacity','0.8');
+    svg.appendChild(cDot);
+
+    // layer label
+    const [lx,ly]=project(size+12,-size,wz);
+    const text=document.createElementNS(svgNS,'text');
+    text.setAttribute('x',lx); text.setAttribute('y',ly);
+    text.setAttribute('fill',g.color+'aa');
+    text.setAttribute('font-size','11');
+    text.setAttribute('font-family','DM Mono,monospace');
+    text.textContent=g.name;
+    svg.appendChild(text);
+  });
+
+  // Draw 3D connections between layers
+  state.connections3d.forEach(c=>{
+    const ga=state.groups.find(g=>g.id===c.aGid);
+    const gb=state.groups.find(g=>g.id===c.bGid);
+    if(!ga||!gb||ga.hidden||gb.hidden) return;
+    const liA=visGroups.indexOf(ga), liB=visGroups.indexOf(gb);
+    const wa=ga.words.find(w=>w.id===c.aWid);
+    const wb=gb.words.find(w=>w.id===c.bWid);
+    if(!wa||!wb) return;
+    const wzA=(liA-(numLayers-1)/2)*v3.layerDist;
+    const wzB=(liB-(numLayers-1)/2)*v3.layerDist;
+    const [ax,ay]=project(wa.x3,wa.y3,wzA);
+    const [bx,by]=project(wb.x3,wb.y3,wzB);
+    const line=document.createElementNS(svgNS,'line');
+    line.setAttribute('x1',ax);line.setAttribute('y1',ay);
+    line.setAttribute('x2',bx);line.setAttribute('y2',by);
+    line.setAttribute('stroke','#fff');
+    line.setAttribute('stroke-width','1');
+    line.setAttribute('stroke-dasharray','5,4');
+    line.setAttribute('opacity','0.3');
+    if(v3.mode==='connect') {
+      line.style.pointerEvents='all'; line.style.cursor='pointer';
+      line.addEventListener('click',()=>{
+        state.connections3d=state.connections3d.filter(x=>x!==c);
+        render3D(); render2D();
+      });
+    }
+    svg.appendChild(line);
+  });
+
+  // Draw 2D connections within each layer
+  visGroups.forEach((g,li) => {
+    const wz=(li-(numLayers-1)/2)*v3.layerDist;
+    g.connections2d.forEach(conn=>{
+      const wa=g.words.find(w=>w.id===conn.a);
+      const wb=g.words.find(w=>w.id===conn.b);
+      if(!wa||!wb) return;
+      const [ax,ay]=project(wa.x3,wa.y3,wz);
+      const [bx,by]=project(wb.x3,wb.y3,wz);
+      const line=document.createElementNS(svgNS,'line');
+      line.setAttribute('x1',ax);line.setAttribute('y1',ay);
+      line.setAttribute('x2',bx);line.setAttribute('y2',by);
+      line.setAttribute('stroke',g.color);
+      line.setAttribute('stroke-width','1.5');
+      line.setAttribute('opacity','0.5');
+      svg.appendChild(line);
+    });
+  });
+
+  // Draw word nodes
+  visGroups.forEach((g,li) => {
+    const wz=(li-(numLayers-1)/2)*v3.layerDist;
+    g.words.forEach(w=>{
+      const [sx,sy,sc]=project(w.x3,w.y3,wz);
+      const el=document.createElement('div');
+      el.className='word-node-3d';
+      if(v3.selected.has(w.id)) el.classList.add('multi-selected');
+      el.textContent=w.text;
+      el.style.left=sx+'px'; el.style.top=sy+'px';
+      el.style.setProperty('--group-color',g.color);
+      el.style.fontSize=Math.max(8,11*sc*v3.zoom)+'px';
+      el.style.opacity=Math.max(0.4,sc).toFixed(2);
+      el.dataset.gid=g.id; el.dataset.wid=w.id;
+      el.addEventListener('click',e=>handleWordClick3D(e,g,w,li));
+      if(v3.mode==='move') {
+        el.addEventListener('mousedown',e=>startDrag3D(e,g,w,li));
+      }
+      canvas.appendChild(el);
+    });
+  });
+}
+
+function handleWordClick3D(e,g,w,li) {
+  if(v3.mode==='move') {
+    if(e.shiftKey) {
+      if(v3.selected.has(w.id)) v3.selected.delete(w.id);
+      else v3.selected.add(w.id);
+      render3D(); return;
+    } else if(!v3.selected.has(w.id)) {
+      v3.selected.clear(); render3D(); return;
+    }
+    return;
+  }
+  if(v3.mode!=='connect') return;
+  e.stopPropagation();
+  if(!v3.connectFirst) {
+    v3.connectFirst={gid:g.id,wid:w.id};
+    showToast('두 번째 단어를 클릭하세요.');
+    render3D();
+  } else {
+    if(v3.connectFirst.gid===g.id) {
+      // same group
+      const gg=state.groups.find(x=>x.id===g.id);
+      const exists=gg.connections2d.find(c=>(c.a===v3.connectFirst.wid&&c.b===w.id)||(c.b===v3.connectFirst.wid&&c.a===w.id));
+      if(exists) { gg.connections2d=gg.connections2d.filter(c=>c!==exists); showToast('연결 해제됨'); }
+      else { gg.connections2d.push({a:v3.connectFirst.wid,b:w.id}); showToast('연결됨'); }
+    } else {
+      const exists=state.connections3d.find(c=>
+        (c.aGid===v3.connectFirst.gid&&c.aWid===v3.connectFirst.wid&&c.bGid===g.id&&c.bWid===w.id)||
+        (c.bGid===v3.connectFirst.gid&&c.bWid===v3.connectFirst.wid&&c.aGid===g.id&&c.aWid===w.id)
+      );
+      if(exists) { state.connections3d=state.connections3d.filter(c=>c!==exists); showToast('3D 연결 해제됨'); }
+      else { state.connections3d.push({aGid:v3.connectFirst.gid,aWid:v3.connectFirst.wid,bGid:g.id,bWid:w.id}); showToast('3D 연결됨'); }
+    }
+    v3.connectFirst=null;
+    render3D(); render2D();
+  }
+}
+
+function startDrag3D(e,g,w,li) {
+  if(v3.mode!=='move') return;
+  e.preventDefault(); e.stopPropagation();
+
+  const isSelected=v3.selected.has(w.id);
+  if(!isSelected && !e.shiftKey) { v3.selected.clear(); v3.selected.add(w.id); render3D(); }
+  else if(!isSelected && e.shiftKey) { v3.selected.add(w.id); render3D(); }
+
+  const visGroups=state.groups.filter(x=>!x.hidden);
+  const numLayers=visGroups.length;
+  const rx=v3.rotX*Math.PI/180, ry2=v3.rotY*Math.PI/180;
+
+  // Collect selected words per layer
+  const dragSet=[];
+  visGroups.forEach((grp,gLi)=>{
+    grp.words.forEach(word=>{
+      if(v3.selected.has(word.id)) dragSet.push({word, ox:word.x3, oy:word.y3, li:gLi});
+    });
+  });
+  if(dragSet.length===0) dragSet.push({word:w, ox:w.x3, oy:w.y3, li});
+
+  const startX=e.clientX, startY=e.clientY;
+
+  function onMove(ev) {
+    const dx=(ev.clientX-startX)/v3.zoom;
+    const dy=(ev.clientY-startY)/v3.zoom;
+    dragSet.forEach(({word,ox,oy})=>{
+      word.x3=ox+dx*Math.cos(ry2);
+      word.y3=oy+dy/Math.max(0.3,Math.cos(rx*0.5));
+      word.x=word.x3; word.y=word.y3;
+    });
+    render3D(); render2D();
+  }
+  function onUp(){document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);}
+  document.addEventListener('mousemove',onMove);
+  document.addEventListener('mouseup',onUp);
+}
+
+// 3D canvas interactions
+const canvas3d=document.getElementById('canvas-3d');
+let lastMouse3D={x:0,y:0};
+
+canvas3d.addEventListener('mousedown',e=>{
+  lastMouse3D={x:e.clientX,y:e.clientY};
+  const isCmd=e.metaKey||e.ctrlKey;
+
+  if(v3.mode!=='observe'&&!isCmd) return;
+
+  canvas3d.classList.add('grabbing');
+  function onMove(ev) {
+    const dx=ev.clientX-lastMouse3D.x;
+    const dy=ev.clientY-lastMouse3D.y;
+    const cmd=ev.metaKey||ev.ctrlKey;
+    if(cmd) {
+      v3.rotY+=dx*0.4;
+      v3.rotX+=dy*0.4;
+      v3.rotX=Math.max(-80,Math.min(80,v3.rotX));
+    } else {
+      v3.panX+=dx; v3.panY+=dy;
+    }
+    lastMouse3D={x:ev.clientX,y:ev.clientY};
+    render3D();
+  }
+  function onUp(){canvas3d.classList.remove('grabbing');document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);}
+  document.addEventListener('mousemove',onMove);
+  document.addEventListener('mouseup',onUp);
+});
+
+canvas3d.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const dz=e.deltaY<0?1.1:0.9;
+  v3.zoom=Math.max(0.3,Math.min(3,v3.zoom*dz));
+  render3D();
+},{passive:false});
+
+function setMode3D(m) {
+  v3.mode=m; v3.connectFirst=null; v3.selected.clear();
+  document.querySelectorAll('[id^=btn-][id$=-3d]').forEach(b=>b.classList.remove('active'));
+  document.getElementById('btn-'+m+'-3d')?.classList.add('active');
+  const hints={
+    observe:'관찰: 드래그 이동 · 스크롤 줌 · ⌘+드래그 360° 회전',
+    connect:'연결 모드: 두 단어를 클릭하여 연결',
+    move:'이동 모드: 클릭 선택 · Shift+클릭 다중 선택 · 드래그로 이동'
+  };
+  document.getElementById('hint-3d').textContent=hints[m]||'';
+  render3D();
+}
+
+// ========================
+// LAYER PANEL
+// ========================
+function renderLayerPanel() {
+  const list=document.getElementById('layer-list');
+  list.innerHTML='';
+  state.groups.forEach(g=>{
+    const div=document.createElement('div');
+    div.className='layer-item'+(g.hidden?' hidden':'');
+    div.innerHTML=`<div class="layer-dot" style="background:${g.color}"></div><span>${g.name}</span><span class="layer-eye">${g.hidden?'🙈':'👁'}</span>`;
+    div.addEventListener('click',()=>{g.hidden=!g.hidden;renderLayerPanel();render3D();render2D();});
+    list.appendChild(div);
+  });
+}
+
+function onDistChange() {
+  v3.layerDist=parseInt(document.getElementById('dist-slider').value);
+  document.getElementById('dist-val').textContent=v3.layerDist+' px';
+  render3D();
+}
+
+// ========================
+// PAGE SWITCH
+// ========================
+function switchPage(p) {
+  document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(x=>x.classList.remove('active'));
+  document.getElementById('page-'+p).classList.add('active');
+  document.querySelectorAll('.nav-tab')[p==='2d'?0:1].classList.add('active');
+  if(p==='2d') render2D();
+  else { render3D(); renderLayerPanel(); }
+}
+
+// ========================
+// TOAST
+// ========================
+let toastTimer=null;
+function showToast(msg) {
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>t.classList.remove('show'),2000);
+}
+
+// ========================
+// START
+// ========================
+setMode2D('observe');
+setMode3D('observe');
+init();
+
+// resize
+window.addEventListener('resize',()=>{render2D();render3D();});
+</script>
+</body>
+</html>
