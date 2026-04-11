@@ -325,6 +325,10 @@
     <button class="nav-tab active" onclick="switchPage('2d')">2D 맵핑</button>
     <button class="nav-tab" onclick="switchPage('3d')">3D 맵핑</button>
   </div>
+  <div style="display:flex;align-items:center;gap:8px;">
+    <div id="save-dot" style="width:6px;height:6px;border-radius:50%;background:var(--accent3);opacity:0;transition:opacity 0.4s;" title="저장됨"></div>
+    <span style="font-size:10px;color:var(--text-dim);" id="save-label">저장됨</span>
+  </div>
 </div>
 
 <!-- ========== 2D PAGE ========== -->
@@ -421,22 +425,6 @@ let v2 = { panX:0, panY:0, zoom:1, mode:'observe', connectFirst:null, selected: 
 let v3 = { panX:0, panY:0, zoom:1, rotX:-20, rotY:0, mode:'observe', connectFirst:null, layerDist:140, selected: new Set() };
 
 // ========================
-// INIT
-// ========================
-function init() {
-  createGroup('그룹 A');
-  createGroup('그룹 B');
-  // sample words
-  addWordToGroup(0, '사랑', 320, 250);
-  addWordToGroup(0, '기억', 500, 180);
-  addWordToGroup(0, '시간', 420, 340);
-  addWordToGroup(1, '공간', 650, 260);
-  addWordToGroup(1, '빛', 720, 160);
-  state.groups[0].connections2d.push({a: state.groups[0].words[0].id, b: state.groups[0].words[1].id});
-  render2D(); render3D(); renderLayerPanel();
-}
-
-// ========================
 // GROUP MANAGEMENT
 // ========================
 function createGroup(name) {
@@ -447,6 +435,7 @@ function createGroup(name) {
     words: [], connections2d: [], hidden: false
   });
   refreshGroupSelect(); render2D(); render3D(); renderLayerPanel();
+  scheduleSave();
 }
 
 function deleteGroup() {
@@ -456,6 +445,7 @@ function deleteGroup() {
   state.groups = state.groups.filter(g=>g.id!==sel.id);
   state.connections3d = state.connections3d.filter(c=>c.aGid!==sel.id&&c.bGid!==sel.id);
   refreshGroupSelect(); render2D(); render3D(); renderLayerPanel();
+  scheduleSave();
 }
 
 function getSelectedGroup() {
@@ -497,7 +487,7 @@ document.getElementById('modal-overlay').addEventListener('click',e=>{if(e.targe
 
 function openRenameModal() {
   const g = getSelectedGroup(); if(!g) return;
-  openModal('그룹 이름 변경', g.name, v=>{g.name=v; refreshGroupSelect(); renderLayerPanel(); render3D();});
+  openModal('그룹 이름 변경', g.name, v=>{g.name=v; refreshGroupSelect(); renderLayerPanel(); render3D(); scheduleSave();});
 }
 
 // ========================
@@ -510,6 +500,7 @@ function addWord2D() {
     const cy = (canvasH()/2 - v2.panY)/v2.zoom + Math.random()*60-30;
     addWordToGroup(state.groups.indexOf(g), v, cx, cy);
     render2D(); render3D(); renderLayerPanel();
+    scheduleSave();
   });
 }
 
@@ -688,7 +679,7 @@ function handleWordClick2D(e, g, w) {
         }
       }
       v2.connectFirst=null;
-      render2D(); render3D();
+      render2D(); render3D(); scheduleSave();
     }
   } else if(v2.mode==='edit') {
     editWord(g,w);
@@ -697,7 +688,7 @@ function handleWordClick2D(e, g, w) {
 
 function editWord(g,w) {
   openModal('단어 편집', w.text, v=>{
-    w.text=v; render2D(); render3D();
+    w.text=v; render2D(); render3D(); scheduleSave();
   });
 }
 
@@ -705,7 +696,7 @@ function removeConnection2D(gid,a,b) {
   const g = state.groups.find(x=>x.id===gid);
   if(!g) return;
   g.connections2d = g.connections2d.filter(c=>!(c.a===a&&c.b===b)&&!(c.a===b&&c.b===a));
-  render2D();
+  render2D(); scheduleSave();
 }
 
 // ========================
@@ -753,6 +744,7 @@ function startDrag2D(e, g, w) {
   function onUp() {
     document.removeEventListener('mousemove',onMove);
     document.removeEventListener('mouseup',onUp);
+    scheduleSave();
   }
   document.addEventListener('mousemove',onMove);
   document.addEventListener('mouseup',onUp);
@@ -1036,7 +1028,7 @@ function handleWordClick3D(e,g,w,li) {
       else { state.connections3d.push({aGid:v3.connectFirst.gid,aWid:v3.connectFirst.wid,bGid:g.id,bWid:w.id}); showToast('3D 연결됨'); }
     }
     v3.connectFirst=null;
-    render3D(); render2D();
+    render3D(); render2D(); scheduleSave();
   }
 }
 
@@ -1073,7 +1065,7 @@ function startDrag3D(e,g,w,li) {
     });
     render3D(); render2D();
   }
-  function onUp(){document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);}
+  function onUp(){document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp); scheduleSave();}
   document.addEventListener('mousemove',onMove);
   document.addEventListener('mouseup',onUp);
 }
@@ -1138,7 +1130,7 @@ function renderLayerPanel() {
     const div=document.createElement('div');
     div.className='layer-item'+(g.hidden?' hidden':'');
     div.innerHTML=`<div class="layer-dot" style="background:${g.color}"></div><span>${g.name}</span><span class="layer-eye">${g.hidden?'🙈':'👁'}</span>`;
-    div.addEventListener('click',()=>{g.hidden=!g.hidden;renderLayerPanel();render3D();render2D();});
+    div.addEventListener('click',()=>{g.hidden=!g.hidden;renderLayerPanel();render3D();render2D(); scheduleSave();});
     list.appendChild(div);
   });
 }
@@ -1146,7 +1138,7 @@ function renderLayerPanel() {
 function onDistChange() {
   v3.layerDist=parseInt(document.getElementById('dist-slider').value);
   document.getElementById('dist-val').textContent=v3.layerDist+' px';
-  render3D();
+  render3D(); scheduleSave();
 }
 
 // ========================
@@ -1173,14 +1165,102 @@ function showToast(msg) {
 }
 
 // ========================
+// PERSISTENCE (shared storage)
+// ========================
+const STORAGE_KEY = 'wordmap-state-v1';
+let saveTimer = null;
+
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveState, 600);
+}
+
+async function saveState() {
+  try {
+    const payload = JSON.stringify({
+      groups: state.groups,
+      nextGid: state.nextGid,
+      nextWid: state.nextWid,
+      connections3d: state.connections3d,
+      layerDist: v3.layerDist,
+    });
+    await window.storage.set(STORAGE_KEY, payload, true); // shared=true → all visitors
+    showSaveIndicator();
+  } catch(e) { console.warn('저장 실패:', e); }
+}
+
+async function loadState() {
+  try {
+    const result = await window.storage.get(STORAGE_KEY, true);
+    if (result && result.value) {
+      const saved = JSON.parse(result.value);
+      state.groups        = saved.groups        || [];
+      state.nextGid       = saved.nextGid       || 1;
+      state.nextWid       = saved.nextWid       || 1;
+      state.connections3d = saved.connections3d || [];
+      if (saved.layerDist) {
+        v3.layerDist = saved.layerDist;
+        document.getElementById('dist-slider').value = v3.layerDist;
+        document.getElementById('dist-val').textContent = v3.layerDist + ' px';
+      }
+      return true; // loaded from storage
+    }
+  } catch(e) { console.warn('불러오기 실패:', e); }
+  return false;
+}
+
+// Save indicator (small dot in nav)
+function showSaveIndicator() {
+  const dot = document.getElementById('save-dot');
+  const lbl = document.getElementById('save-label');
+  if (!dot) return;
+  dot.style.opacity = '1';
+  if(lbl) { lbl.textContent='저장됨'; lbl.style.color='var(--accent3)'; }
+  clearTimeout(dot._t);
+  dot._t = setTimeout(() => {
+    dot.style.opacity = '0';
+    if(lbl) { lbl.style.color='var(--text-dim)'; }
+  }, 1500);
+}
+
+// Wrap every state-mutating render call to also persist
+function saveAfter(fn) {
+  return function(...args) {
+    const r = fn.apply(this, args);
+    scheduleSave();
+    return r;
+  };
+}
+
+// ========================
 // START
 // ========================
 setMode2D('observe');
 setMode3D('observe');
-init();
+
+(async () => {
+  const loaded = await loadState();
+  if (!loaded) {
+    // First time: seed with sample data
+    const ga = { id: state.nextGid++, name:'그룹 A', color: GROUP_COLORS[0], words:[], connections2d:[], hidden:false };
+    const gb = { id: state.nextGid++, name:'그룹 B', color: GROUP_COLORS[1], words:[], connections2d:[], hidden:false };
+    state.groups.push(ga, gb);
+    const ids = [];
+    [['사랑',320,250],['기억',500,180],['시간',420,340]].forEach(([t,x,y])=>{
+      const id=state.nextWid++; ga.words.push({id,text:t,x,y,x3:x,y3:y}); ids.push(id);
+    });
+    [['공간',650,260],['빛',720,160]].forEach(([t,x,y])=>{
+      const id=state.nextWid++; gb.words.push({id,text:t,x,y,x3:x,y3:y});
+    });
+    ga.connections2d.push({a:ids[0],b:ids[1]});
+    await saveState();
+  }
+  refreshGroupSelect();
+  render2D(); render3D(); renderLayerPanel();
+})();
 
 // resize
-window.addEventListener('resize',()=>{render2D();render3D();});
+window.addEventListener('resize',()=>{render2D();render3D()});
 </script>
 </body>
 </html>
