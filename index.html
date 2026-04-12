@@ -1137,24 +1137,32 @@ function showToast(msg) {
 }
 
 // ========================
+// FIREBASE CONFIG
+// ▼ 아래 URL만 본인 Firebase DB 주소로 교체하세요 ▼
+// ========================
+const FIREBASE_URL = 'https://word-map-47629-default-rtdb.asia-southeast1.firebasedatabase.app';
+// 예시: 'https://my-project-default-rtdb.asia-southeast1.firebasedatabase.app'
+const FB_PATH = '/wordmap-state.json';
+
+// ========================
 // PERSISTENCE
 // ========================
-const STORAGE_KEY = 'wordmap-state-v1';
 let saveTimer = null;
 
 function scheduleSave() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveState, 600);
+  saveTimer = setTimeout(saveState, 800);
 }
 
 function buildPayload() {
-  return JSON.stringify({
+  return {
     groups: state.groups,
     nextGid: state.nextGid,
     nextWid: state.nextWid,
     connections3d: state.connections3d,
     layerDist: v3.layerDist,
-  });
+    savedAt: Date.now()
+  };
 }
 
 function applyPayload(saved) {
@@ -1167,65 +1175,123 @@ function applyPayload(saved) {
     document.getElementById('dist-slider').value = v3.layerDist;
     document.getElementById('dist-val').textContent = v3.layerDist + ' px';
   }
-  // ensure x3/y3 exist (backwards compat)
+  // x3/y3 하위 호환
   state.groups.forEach(g => g.words.forEach(w => {
-    if(w.x3===undefined) { w.x3=w.x; w.y3=w.y; }
+    if (w.x3 === undefined) { w.x3 = w.x; w.y3 = w.y; }
   }));
+}
+
+function isFirebaseConfigured() {
+  return FIREBASE_URL && FIREBASE_URL !== 'YOUR_FIREBASE_URL_HERE';
 }
 
 async function saveState() {
   const payload = buildPayload();
-  // 1) Always save to localStorage (works on reload / same browser)
-  try { localStorage.setItem(STORAGE_KEY, payload); } catch(e) {}
-  // 2) Also try artifact shared storage (works across different users/devices)
+
+  // 항상 localStorage에도 저장 (빠른 캐시)
+  try { localStorage.setItem('wordmap-cache', JSON.stringify(payload)); } catch(e) {}
+
+  if (!isFirebaseConfigured()) {
+    showSaveIndicator('local');
+    return;
+  }
+
   try {
-    if (window.storage) {
-      await window.storage.set(STORAGE_KEY, payload, true);
+    const res = await fetch(FIREBASE_URL + FB_PATH, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+      showSaveIndicator('cloud');
+    } else {
+      showSaveIndicator('error');
     }
-  } catch(e) {}
-  showSaveIndicator();
+  } catch(e) {
+    showSaveIndicator('error');
+    console.warn('Firebase 저장 실패:', e);
+  }
 }
 
 async function loadState() {
-  let saved = null;
+  // 1) Firebase에서 불러오기 시도
+  if (isFirebaseConfigured()) {
+    try {
+      const res = await fetch(FIREBASE_URL + FB_PATH);
+      if (res.ok) {
+        const saved = await res.json();
+        if (saved && saved.groups && saved.groups.length > 0) {
+          applyPayload(saved);
+          // 최신 데이터를 로컬 캐시에도 저장
+          try { localStorage.setItem('wordmap-cache', JSON.stringify(saved)); } catch(e) {}
+          return true;
+        }
+      }
+    } catch(e) {
+      console.warn('Firebase 불러오기 실패, 로컬 캐시로 대체:', e);
+    }
+  }
 
-  // 1) Try artifact shared storage first (most up-to-date across users)
+  // 2) 로컬 캐시로 폴백 (오프라인 or Firebase 미설정)
   try {
-    if (window.storage) {
-      const result = await window.storage.get(STORAGE_KEY, true);
-      if (result && result.value) {
-        saved = JSON.parse(result.value);
+    const raw = localStorage.getItem('wordmap-cache');
+    if (raw) {
+      const saved = JSON.parse(raw);
+      if (saved && saved.groups && saved.groups.length > 0) {
+        applyPayload(saved);
+        return true;
       }
     }
   } catch(e) {}
 
-  // 2) Fall back to localStorage
-  if (!saved) {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) saved = JSON.parse(raw);
-    } catch(e) {}
-  }
-
-  if (saved && saved.groups && saved.groups.length > 0) {
-    applyPayload(saved);
-    return true;
-  }
   return false;
 }
 
-// Save indicator
-function showSaveIndicator() {
+// 저장 상태 표시
+function showSaveIndicator(type) {
   const dot = document.getElementById('save-dot');
   const lbl = document.getElementById('save-label');
   if (!dot) return;
+
+  const config = {
+    cloud: { color: 'var(--accent3)', text: '☁ 저장됨' },
+    local: { color: 'var(--accent)',  text: '저장됨 (로컬)' },
+    error: { color: 'var(--accent2)', text: '저장 실패' },
+  };
+  const c = config[type] || config.local;
+
+  dot.style.background = c.color;
   dot.style.opacity = '1';
-  if(lbl) { lbl.textContent='저장됨'; lbl.style.color='var(--accent3)'; }
+  if (lbl) { lbl.textContent = c.text; lbl.style.color = c.color; }
+
   clearTimeout(dot._t);
   dot._t = setTimeout(() => {
     dot.style.opacity = '0';
-    if(lbl) { lbl.style.color='var(--text-dim)'; }
-  }, 1500);
+    if (lbl) { lbl.textContent = '저장됨'; lbl.style.color = 'var(--text-dim)'; }
+  }, 2000);
+}
+
+// Firebase 미설정 시 상단에 안내 배너 표시
+function showSetupBanner() {
+  if (isFirebaseConfigured()) return;
+  const banner = document.createElement('div');
+  banner.style.cssText = `
+    position:fixed; top:52px; left:0; right:0; z-index:200;
+    background:#1a1a10; border-bottom:1px solid #f0c26c44;
+    padding:8px 20px; font-size:11px; color:#f0c26c;
+    font-family:'DM Mono',monospace; display:flex; align-items:center; gap:12px;
+  `;
+  banner.innerHTML = `
+    <span>⚠ Firebase 미연결 — 같은 브라우저에서만 저장됩니다.</span>
+    <a href="https://console.firebase.google.com" target="_blank"
+       style="color:#f0c26c;text-decoration:underline;">Firebase 설정하기 →</a>
+    <button onclick="this.parentElement.remove()" style="
+      margin-left:auto; background:none; border:none; color:#f0c26c;
+      cursor:pointer; font-size:14px; padding:0 4px;">✕</button>
+  `;
+  document.body.appendChild(banner);
+  // 배너 높이만큼 페이지 offset 조정
+  document.querySelectorAll('.page').forEach(p => p.style.top = '84px');
 }
 
 // ========================
@@ -1235,9 +1301,11 @@ setMode2D('observe');
 setMode3D('observe');
 
 (async () => {
+  showSetupBanner();
+
   const loaded = await loadState();
   if (!loaded) {
-    // First-ever visit: seed sample data directly into state (no scheduleSave side-effects)
+    // 최초 방문: 샘플 데이터 삽입
     const ga = { id: state.nextGid++, name:'그룹 A', color: GROUP_COLORS[0], words:[], connections2d:[], hidden:false };
     const gb = { id: state.nextGid++, name:'그룹 B', color: GROUP_COLORS[1], words:[], connections2d:[], hidden:false };
     state.groups.push(ga, gb);
@@ -1251,13 +1319,14 @@ setMode3D('observe');
     ga.connections2d.push({a:ids[0],b:ids[1]});
     await saveState();
   }
+
   refreshGroupSelect();
   render2D(); render3D(); renderLayerPanel();
 })();
 
-// Also save on page unload as a safety net
+// 페이지 닫기 직전 로컬 저장 (안전망)
 window.addEventListener('beforeunload', () => {
-  try { localStorage.setItem(STORAGE_KEY, buildPayload()); } catch(e) {}
+  try { localStorage.setItem('wordmap-cache', JSON.stringify(buildPayload())); } catch(e) {}
 });
 
 // resize
