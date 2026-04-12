@@ -453,7 +453,11 @@ function getSelectedGroup() {
   return state.groups.find(g=>g.id===gid);
 }
 
-function onGroupChange() { render2D(); }
+function onGroupChange() {
+  v2.selected.clear();
+  v2.connectFirst = null;
+  render2D();
+}
 
 function refreshGroupSelect() {
   const sel = document.getElementById('group-select');
@@ -525,22 +529,23 @@ function render2D() {
 
   const svgNS = 'http://www.w3.org/2000/svg';
 
-  // Draw center crosshair per group
-  state.groups.forEach(g => {
-    if(g.hidden || g.words.length===0) return;
-    // centroid of words
+  // Only show the currently selected group in 2D
+  const selGid = parseInt(document.getElementById('group-select').value);
+  const activeGroups = state.groups.filter(g => g.id === selGid && !g.hidden);
+
+  // Draw center crosshair for active group
+  activeGroups.forEach(g => {
+    if(g.words.length===0) return;
     const cx = g.words.reduce((s,w)=>s+w.x,0)/g.words.length;
     const cy = g.words.reduce((s,w)=>s+w.y,0)/g.words.length;
     const [sx,sy] = worldToScreen2D(cx,cy);
     const r=10;
-    // outer ring
     const circle = document.createElementNS(svgNS,'circle');
     circle.setAttribute('cx',sx); circle.setAttribute('cy',sy);
     circle.setAttribute('r',r); circle.setAttribute('fill','none');
     circle.setAttribute('stroke',g.color); circle.setAttribute('stroke-width','1');
     circle.setAttribute('opacity','0.5'); circle.setAttribute('class','center-cross');
     svg.appendChild(circle);
-    // crosshairs
     [[-r-4,0,-r+2,0],[r-2,0,r+4,0],[0,-r-4,0,-r+2],[0,r-2,0,r+4]].forEach(([x1,y1,x2,y2])=>{
       const l=document.createElementNS(svgNS,'line');
       l.setAttribute('x1',sx+x1); l.setAttribute('y1',sy+y1);
@@ -549,7 +554,6 @@ function render2D() {
       l.setAttribute('opacity','0.5'); l.setAttribute('class','center-cross');
       svg.appendChild(l);
     });
-    // dot
     const dot=document.createElementNS(svgNS,'circle');
     dot.setAttribute('cx',sx); dot.setAttribute('cy',sy);
     dot.setAttribute('r',2); dot.setAttribute('fill',g.color);
@@ -557,9 +561,8 @@ function render2D() {
     svg.appendChild(dot);
   });
 
-  // Draw edges
-  state.groups.forEach(g => {
-    if(g.hidden) return;
+  // Draw edges (only within active group)
+  activeGroups.forEach(g => {
     g.connections2d.forEach(conn => {
       const wa = g.words.find(w=>w.id===conn.a);
       const wb = g.words.find(w=>w.id===conn.b);
@@ -581,26 +584,8 @@ function render2D() {
     });
   });
 
-  // Draw 3D cross connections projected on 2D
-  state.connections3d.forEach(c=>{
-    const ga = state.groups.find(g=>g.id===c.aGid);
-    const gb = state.groups.find(g=>g.id===c.bGid);
-    if(!ga||!gb) return;
-    const wa = ga.words.find(w=>w.id===c.aWid);
-    const wb = gb.words.find(w=>w.id===c.bWid);
-    if(!wa||!wb) return;
-    const [ax,ay] = worldToScreen2D(wa.x,wa.y);
-    const [bx,by] = worldToScreen2D(wb.x,wb.y);
-    const line = document.createElementNS(svgNS,'line');
-    line.setAttribute('x1',ax); line.setAttribute('y1',ay);
-    line.setAttribute('x2',bx); line.setAttribute('y2',by);
-    line.setAttribute('class','edge-line-3d');
-    svg.appendChild(line);
-  });
-
-  // Draw nodes
-  state.groups.forEach(g => {
-    if(g.hidden) return;
+  // Draw word nodes (only active group)
+  activeGroups.forEach(g => {
     g.words.forEach(w => {
       const [sx,sy] = worldToScreen2D(w.x, w.y);
       const el = document.createElement('div');
@@ -653,9 +638,9 @@ function handleWordClick2D(e, g, w) {
       if(v2.connectFirst.wid === w.id && v2.connectFirst.gid === g.id) {
         v2.connectFirst=null; render2D(); return;
       }
-      // same group connection
-      if(v2.connectFirst.gid === g.id) {
-        const gg = state.groups.find(x=>x.id===g.id);
+      // same group only in 2D
+      const gg = state.groups.find(x=>x.id===g.id);
+      if(v2.connectFirst.gid === g.id && gg) {
         const exists = gg.connections2d.find(c=>(c.a===v2.connectFirst.wid&&c.b===w.id)||(c.b===v2.connectFirst.wid&&c.a===w.id));
         if(exists) {
           gg.connections2d = gg.connections2d.filter(c=>c!==exists);
@@ -663,19 +648,6 @@ function handleWordClick2D(e, g, w) {
         } else {
           gg.connections2d.push({a:v2.connectFirst.wid, b:w.id});
           showToast('연결됨');
-        }
-      } else {
-        // cross-group → 3D connection
-        const exists = state.connections3d.find(c=>
-          (c.aGid===v2.connectFirst.gid&&c.aWid===v2.connectFirst.wid&&c.bGid===g.id&&c.bWid===w.id)||
-          (c.bGid===v2.connectFirst.gid&&c.bWid===v2.connectFirst.wid&&c.aGid===g.id&&c.aWid===w.id)
-        );
-        if(exists) {
-          state.connections3d = state.connections3d.filter(c=>c!==exists);
-          showToast('3D 연결 해제됨');
-        } else {
-          state.connections3d.push({aGid:v2.connectFirst.gid,aWid:v2.connectFirst.wid,bGid:g.id,bWid:w.id});
-          showToast('3D 연결됨');
         }
       }
       v2.connectFirst=null;
@@ -832,7 +804,7 @@ function setMode2D(m) {
   const hints={
     observe:'관찰 모드: 드래그로 이동, 스크롤로 줌',
     move:'이동 모드: 드래그로 범위 선택 · Shift+클릭으로 추가 선택 · 드래그로 이동',
-    connect:'연결 모드: 두 단어를 클릭하여 연결 (같은 그룹끼리는 2D, 다른 그룹끼리는 3D 연결)',
+    connect:'연결 모드: 같은 그룹의 두 단어를 클릭하여 연결 (그룹 간 연결은 3D 맵에서)',
     edit:'편집 모드: 단어를 클릭해서 수정'
   };
   document.getElementById('hint-2d').textContent = hints[m]||'';
