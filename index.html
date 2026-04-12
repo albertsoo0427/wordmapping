@@ -1137,7 +1137,7 @@ function showToast(msg) {
 }
 
 // ========================
-// PERSISTENCE (shared storage)
+// PERSISTENCE
 // ========================
 const STORAGE_KEY = 'wordmap-state-v1';
 let saveTimer = null;
@@ -1147,41 +1147,74 @@ function scheduleSave() {
   saveTimer = setTimeout(saveState, 600);
 }
 
+function buildPayload() {
+  return JSON.stringify({
+    groups: state.groups,
+    nextGid: state.nextGid,
+    nextWid: state.nextWid,
+    connections3d: state.connections3d,
+    layerDist: v3.layerDist,
+  });
+}
+
+function applyPayload(saved) {
+  state.groups        = saved.groups        || [];
+  state.nextGid       = saved.nextGid       || 1;
+  state.nextWid       = saved.nextWid       || 1;
+  state.connections3d = saved.connections3d || [];
+  if (saved.layerDist) {
+    v3.layerDist = saved.layerDist;
+    document.getElementById('dist-slider').value = v3.layerDist;
+    document.getElementById('dist-val').textContent = v3.layerDist + ' px';
+  }
+  // ensure x3/y3 exist (backwards compat)
+  state.groups.forEach(g => g.words.forEach(w => {
+    if(w.x3===undefined) { w.x3=w.x; w.y3=w.y; }
+  }));
+}
+
 async function saveState() {
+  const payload = buildPayload();
+  // 1) Always save to localStorage (works on reload / same browser)
+  try { localStorage.setItem(STORAGE_KEY, payload); } catch(e) {}
+  // 2) Also try artifact shared storage (works across different users/devices)
   try {
-    const payload = JSON.stringify({
-      groups: state.groups,
-      nextGid: state.nextGid,
-      nextWid: state.nextWid,
-      connections3d: state.connections3d,
-      layerDist: v3.layerDist,
-    });
-    await window.storage.set(STORAGE_KEY, payload, true); // shared=true → all visitors
-    showSaveIndicator();
-  } catch(e) { console.warn('저장 실패:', e); }
+    if (window.storage) {
+      await window.storage.set(STORAGE_KEY, payload, true);
+    }
+  } catch(e) {}
+  showSaveIndicator();
 }
 
 async function loadState() {
+  let saved = null;
+
+  // 1) Try artifact shared storage first (most up-to-date across users)
   try {
-    const result = await window.storage.get(STORAGE_KEY, true);
-    if (result && result.value) {
-      const saved = JSON.parse(result.value);
-      state.groups        = saved.groups        || [];
-      state.nextGid       = saved.nextGid       || 1;
-      state.nextWid       = saved.nextWid       || 1;
-      state.connections3d = saved.connections3d || [];
-      if (saved.layerDist) {
-        v3.layerDist = saved.layerDist;
-        document.getElementById('dist-slider').value = v3.layerDist;
-        document.getElementById('dist-val').textContent = v3.layerDist + ' px';
+    if (window.storage) {
+      const result = await window.storage.get(STORAGE_KEY, true);
+      if (result && result.value) {
+        saved = JSON.parse(result.value);
       }
-      return true; // loaded from storage
     }
-  } catch(e) { console.warn('불러오기 실패:', e); }
+  } catch(e) {}
+
+  // 2) Fall back to localStorage
+  if (!saved) {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) saved = JSON.parse(raw);
+    } catch(e) {}
+  }
+
+  if (saved && saved.groups && saved.groups.length > 0) {
+    applyPayload(saved);
+    return true;
+  }
   return false;
 }
 
-// Save indicator (small dot in nav)
+// Save indicator
 function showSaveIndicator() {
   const dot = document.getElementById('save-dot');
   const lbl = document.getElementById('save-label');
@@ -1195,15 +1228,6 @@ function showSaveIndicator() {
   }, 1500);
 }
 
-// Wrap every state-mutating render call to also persist
-function saveAfter(fn) {
-  return function(...args) {
-    const r = fn.apply(this, args);
-    scheduleSave();
-    return r;
-  };
-}
-
 // ========================
 // START
 // ========================
@@ -1213,7 +1237,7 @@ setMode3D('observe');
 (async () => {
   const loaded = await loadState();
   if (!loaded) {
-    // First time: seed with sample data
+    // First-ever visit: seed sample data directly into state (no scheduleSave side-effects)
     const ga = { id: state.nextGid++, name:'그룹 A', color: GROUP_COLORS[0], words:[], connections2d:[], hidden:false };
     const gb = { id: state.nextGid++, name:'그룹 B', color: GROUP_COLORS[1], words:[], connections2d:[], hidden:false };
     state.groups.push(ga, gb);
@@ -1231,8 +1255,13 @@ setMode3D('observe');
   render2D(); render3D(); renderLayerPanel();
 })();
 
+// Also save on page unload as a safety net
+window.addEventListener('beforeunload', () => {
+  try { localStorage.setItem(STORAGE_KEY, buildPayload()); } catch(e) {}
+});
+
 // resize
-window.addEventListener('resize',()=>{render2D();render3D()});
+window.addEventListener('resize', () => { render2D(); render3D(); });
 </script>
 </body>
 </html>
