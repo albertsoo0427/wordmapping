@@ -1378,11 +1378,61 @@ setMode2D('observe');
 setMode3D('observe');
 
 (async () => {
-  showSetupBanner();
+  console.log('[WordMap] 시작 — Firebase 로드 시도...');
 
-  const loaded = await loadState();
+  let loaded = false;
+
+  // 1) Firebase 시도
+  if (isFirebaseConfigured()) {
+    try {
+      const res = await fetch(FIREBASE_URL + FB_PATH);
+      console.log('[WordMap] Firebase HTTP 상태:', res.status);
+      if (res.ok) {
+        const raw = await res.json();
+        console.log('[WordMap] Firebase 원본 데이터 타입:', typeof raw, Array.isArray(raw) ? 'array' : (raw ? 'object' : 'null'));
+        if (raw) console.log('[WordMap] Firebase groups 타입:', typeof raw.groups, '값:', JSON.stringify(raw.groups)?.slice(0, 100));
+
+        if (raw && raw.groups) {
+          const arr = toArray(raw.groups);
+          console.log('[WordMap] groups 배열 길이:', arr.length);
+          if (arr.length > 0) {
+            applyPayload(raw);
+            try { localStorage.setItem('wordmap-cache', JSON.stringify(raw)); } catch(e) {}
+            loaded = true;
+            console.log('[WordMap] ✅ Firebase 로드 성공! 그룹 수:', state.groups.length);
+          } else {
+            console.log('[WordMap] ⚠ Firebase groups 배열이 비어있음');
+          }
+        } else {
+          console.log('[WordMap] ⚠ Firebase 데이터 없음 (null)');
+        }
+      }
+    } catch(e) {
+      console.warn('[WordMap] Firebase 로드 실패:', e.message);
+    }
+  }
+
+  // 2) 로컬캐시 폴백
   if (!loaded) {
-    // 최초 방문: 샘플 데이터 삽입
+    console.log('[WordMap] 로컬캐시 시도...');
+    try {
+      const raw = localStorage.getItem('wordmap-cache');
+      if (raw) {
+        const saved = JSON.parse(raw);
+        if (saved && saved.groups && toArray(saved.groups).length > 0) {
+          applyPayload(saved);
+          loaded = true;
+          console.log('[WordMap] ✅ 로컬캐시 로드 성공! 그룹 수:', state.groups.length);
+        }
+      }
+    } catch(e) {
+      console.warn('[WordMap] 로컬캐시 로드 실패:', e.message);
+    }
+  }
+
+  // 3) 최초 방문 — 샘플 데이터
+  if (!loaded) {
+    console.log('[WordMap] 최초 방문 — 샘플 데이터 생성');
     const ga = { id: state.nextGid++, name:'그룹 A', color: GROUP_COLORS[0], words:[], connections2d:[], hidden:false };
     const gb = { id: state.nextGid++, name:'그룹 B', color: GROUP_COLORS[1], words:[], connections2d:[], hidden:false };
     state.groups.push(ga, gb);
@@ -1397,8 +1447,12 @@ setMode3D('observe');
     await saveState();
   }
 
+  // 로드 완료 후에만 렌더링
   refreshGroupSelect();
-  render2D(); render3D(); renderLayerPanel();
+  render2D();
+  render3D();
+  renderLayerPanel();
+  console.log('[WordMap] 렌더링 완료. 현재 그룹:', state.groups.map(g=>g.name));
 })();
 
 // 페이지 닫기 직전 로컬 저장 (안전망)
