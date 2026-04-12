@@ -800,7 +800,7 @@ canvas2d.addEventListener('wheel',e=>{
 // ========================
 function setMode2D(m) {
   v2.mode=m; v2.connectFirst=null; v2.selected.clear();
-  document.querySelectorAll('[id^=btn-][id$=-2d]').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('[id^="btn-"][id$="-2d"]').forEach(b=>b.classList.remove('active'));
   document.getElementById('btn-'+m+'-2d')?.classList.add('active');
   const hints={
     observe:'관찰 모드: 드래그로 이동, 스크롤로 줌',
@@ -1082,7 +1082,7 @@ canvas3d.addEventListener('wheel',e=>{
 
 function setMode3D(m) {
   v3.mode=m; v3.connectFirst=null; v3.selected.clear();
-  document.querySelectorAll('[id^=btn-][id$=-3d]').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('[id^="btn-"][id$="-3d"]').forEach(b=>b.classList.remove('active'));
   document.getElementById('btn-'+m+'-3d')?.classList.add('active');
   const hints={
     observe:'관찰: 드래그 이동 · 스크롤 줌 · ⌘+드래그 360° 회전',
