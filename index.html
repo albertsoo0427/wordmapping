@@ -328,6 +328,7 @@
   <div style="display:flex;align-items:center;gap:8px;">
     <div id="save-dot" style="width:6px;height:6px;border-radius:50%;background:var(--accent3);opacity:0;transition:opacity 0.4s;" title="저장됨"></div>
     <span style="font-size:10px;color:var(--text-dim);" id="save-label">저장됨</span>
+    <button class="btn" id="btn-debug" onclick="runFirebaseTest()" style="font-size:10px;padding:4px 8px;">🔍 연결 테스트</button>
   </div>
 </div>
 
@@ -1165,20 +1166,34 @@ function buildPayload() {
   };
 }
 
+// Firebase는 JS 배열을 {0:...,1:...} 객체로 변환해서 돌려줌 → 다시 배열로 복원
+function toArray(val) {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  return Object.keys(val).sort((a,b)=>Number(a)-Number(b)).map(k=>val[k]);
+}
+
 function applyPayload(saved) {
-  state.groups        = saved.groups        || [];
-  state.nextGid       = saved.nextGid       || 1;
-  state.nextWid       = saved.nextWid       || 1;
-  state.connections3d = saved.connections3d || [];
+  const groups = toArray(saved.groups).map(g => ({
+    ...g,
+    words: toArray(g.words).map(w => ({
+      ...w,
+      x3: w.x3 !== undefined ? w.x3 : w.x,
+      y3: w.y3 !== undefined ? w.y3 : w.y,
+    })),
+    connections2d: toArray(g.connections2d),
+  }));
+
+  state.groups        = groups;
+  state.nextGid       = saved.nextGid || 1;
+  state.nextWid       = saved.nextWid || 1;
+  state.connections3d = toArray(saved.connections3d);
+
   if (saved.layerDist) {
     v3.layerDist = saved.layerDist;
     document.getElementById('dist-slider').value = v3.layerDist;
     document.getElementById('dist-val').textContent = v3.layerDist + ' px';
   }
-  // x3/y3 하위 호환
-  state.groups.forEach(g => g.words.forEach(w => {
-    if (w.x3 === undefined) { w.x3 = w.x; w.y3 = w.y; }
-  }));
 }
 
 function isFirebaseConfigured() {
@@ -1220,9 +1235,9 @@ async function loadState() {
       const res = await fetch(FIREBASE_URL + FB_PATH);
       if (res.ok) {
         const saved = await res.json();
-        if (saved && saved.groups && saved.groups.length > 0) {
+        // saved.groups가 배열이든 객체든 toArray로 처리
+        if (saved && saved.groups && toArray(saved.groups).length > 0) {
           applyPayload(saved);
-          // 최신 데이터를 로컬 캐시에도 저장
           try { localStorage.setItem('wordmap-cache', JSON.stringify(saved)); } catch(e) {}
           return true;
         }
@@ -1232,12 +1247,12 @@ async function loadState() {
     }
   }
 
-  // 2) 로컬 캐시로 폴백 (오프라인 or Firebase 미설정)
+  // 2) 로컬 캐시로 폴백
   try {
     const raw = localStorage.getItem('wordmap-cache');
     if (raw) {
       const saved = JSON.parse(raw);
-      if (saved && saved.groups && saved.groups.length > 0) {
+      if (saved && saved.groups && toArray(saved.groups).length > 0) {
         applyPayload(saved);
         return true;
       }
@@ -1295,8 +1310,70 @@ function showSetupBanner() {
 }
 
 // ========================
-// START
+// FIREBASE DEBUG TEST
 // ========================
+async function runFirebaseTest() {
+  const btn = document.getElementById('btn-debug');
+  btn.textContent = '테스트 중...';
+  btn.disabled = true;
+
+  const lines = [];
+  const log = (icon, msg) => { lines.push(icon + ' ' + msg); };
+
+  log('📍', 'Firebase URL: ' + FIREBASE_URL);
+  log('📍', 'DB Path: ' + FB_PATH);
+
+  // 1) WRITE test
+  try {
+    const writeRes = await fetch(FIREBASE_URL + '/connection-test.json', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ts: Date.now(), ok: true })
+    });
+    const writeStatus = writeRes.status;
+    const writeBody = await writeRes.text();
+    if (writeRes.ok) {
+      log('✅', '쓰기 성공 (HTTP ' + writeStatus + ')');
+    } else {
+      log('❌', '쓰기 실패 (HTTP ' + writeStatus + '): ' + writeBody);
+    }
+  } catch(e) {
+    log('❌', '쓰기 오류: ' + e.message);
+  }
+
+  // 2) READ test
+  try {
+    const readRes = await fetch(FIREBASE_URL + '/connection-test.json');
+    const readStatus = readRes.status;
+    const readBody = await readRes.text();
+    if (readRes.ok) {
+      log('✅', '읽기 성공 (HTTP ' + readStatus + '): ' + readBody.slice(0, 80));
+    } else {
+      log('❌', '읽기 실패 (HTTP ' + readStatus + '): ' + readBody);
+    }
+  } catch(e) {
+    log('❌', '읽기 오류: ' + e.message);
+  }
+
+  // 3) Main data path
+  try {
+    const mainRes = await fetch(FIREBASE_URL + FB_PATH);
+    log('📦', '데이터 경로 상태 (HTTP ' + mainRes.status + ')');
+    const body = await mainRes.text();
+    log('📦', '현재 저장값: ' + (body === 'null' ? '없음(null)' : body.slice(0, 120) + '...'));
+  } catch(e) {
+    log('❌', '데이터 경로 오류: ' + e.message);
+  }
+
+  btn.textContent = '🔍 연결 테스트';
+  btn.disabled = false;
+
+  const result = lines.join('\n');
+  console.log('=== Firebase 진단 ===\n' + result);
+  alert('=== Firebase 진단 결과 ===\n\n' + result + '\n\n콘솔(F12)에도 출력됐습니다.');
+}
+
+
 setMode2D('observe');
 setMode3D('observe');
 
