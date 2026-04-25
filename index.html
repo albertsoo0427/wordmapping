@@ -314,6 +314,48 @@
 
   /* Center cross marker */
   .center-cross { pointer-events:none; }
+
+  /* Edit popup (edit / delete choice) */
+  .edit-popup {
+    position: absolute; z-index: 50;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; overflow: hidden;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    display: flex; flex-direction: column;
+    min-width: 120px;
+  }
+  .edit-popup button {
+    font-family: 'DM Mono', monospace; font-size: 12px;
+    padding: 9px 16px; border: none; background: transparent;
+    color: var(--text); cursor: pointer; text-align: left;
+    transition: background 0.15s;
+  }
+  .edit-popup button:hover { background: var(--surface2); }
+  .edit-popup button.delete { color: var(--accent2); }
+  .edit-popup .popup-sep { height: 1px; background: var(--border); }
+
+  /* Image nodes */
+  .img-node {
+    position: absolute; transform: translate(-50%, -50%);
+    cursor: pointer; z-index: 2;
+    border: 2px solid transparent;
+    border-radius: 4px; transition: border-color 0.15s;
+    line-height: 0;
+  }
+  .img-node img { display: block; border-radius: 3px; pointer-events: none; }
+  .img-node:hover { border-color: var(--accent); }
+  .img-node.multi-selected { border-color: var(--accent2) !important; }
+  .img-node.selected-edit { border-color: var(--accent3) !important; }
+
+  /* Resize handle on image */
+  .img-resize-handle {
+    position: absolute; bottom: -5px; right: -5px;
+    width: 12px; height: 12px; border-radius: 2px;
+    background: var(--accent); cursor: se-resize; z-index: 3;
+    opacity: 0; transition: opacity 0.15s;
+  }
+  .img-node:hover .img-resize-handle,
+  .img-node.selected-edit .img-resize-handle { opacity: 1; }
 </style>
 </head>
 <body>
@@ -343,6 +385,8 @@
       <button class="btn danger" onclick="deleteGroup()">그룹 삭제</button>
       <div class="sep"></div>
       <button class="btn success" onclick="addWord2D()">+ 단어</button>
+      <button class="btn" onclick="triggerImageUpload()">🖼 이미지 추가</button>
+      <input type="file" id="img-upload-input" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none" onchange="handleImageUpload(event)">
     </div>
     <!-- RIGHT -->
     <div class="tb-group">
@@ -524,8 +568,9 @@ function render2D() {
   const canvas = document.getElementById('canvas-2d');
   const svg = document.getElementById('svg-2d');
 
-  // Remove old nodes
-  canvas.querySelectorAll('.word-node').forEach(n=>n.remove());
+  // Remove old nodes (word + image + any open popup)
+  canvas.querySelectorAll('.word-node, .img-node, .edit-popup').forEach(n=>n.remove());
+  currentPopup = null;
   svg.innerHTML = '';
 
   const svgNS = 'http://www.w3.org/2000/svg';
@@ -585,25 +630,79 @@ function render2D() {
     });
   });
 
-  // Draw word nodes (only active group)
+  // Draw word nodes + image nodes (only active group)
   activeGroups.forEach(g => {
     g.words.forEach(w => {
       const [sx,sy] = worldToScreen2D(w.x, w.y);
-      const el = document.createElement('div');
-      el.className = 'word-node';
-      if(v2.selected.has(w.id)) el.classList.add('multi-selected');
-      el.textContent = w.text;
-      el.style.left = sx+'px'; el.style.top = sy+'px';
-      el.style.setProperty('--group-color', g.color);
-      el.dataset.wid = w.id; el.dataset.gid = g.id;
-      el.style.fontSize = Math.max(9, 13*v2.zoom)+'px';
 
-      el.addEventListener('click', e=>handleWordClick2D(e, g, w));
-      el.addEventListener('mousedown', e=>startDrag2D(e, g, w));
-      el.addEventListener('dblclick', e=>{
-        if(v2.mode==='edit') editWord(g,w);
-      });
-      canvas.appendChild(el);
+      if (w.isImage) {
+        // --- IMAGE NODE ---
+        const el = document.createElement('div');
+        el.className = 'img-node';
+        if (v2.selected.has(w.id)) el.classList.add('multi-selected');
+        const imgW = (w.imgW || 160) * v2.zoom;
+        const imgH = (w.imgH || 120) * v2.zoom;
+        el.style.left = sx + 'px'; el.style.top = sy + 'px';
+        el.style.width = imgW + 'px'; el.style.height = imgH + 'px';
+
+        const img = document.createElement('img');
+        img.src = w.imgData;
+        img.style.width = imgW + 'px';
+        img.style.height = imgH + 'px';
+        img.style.objectFit = 'cover';
+        el.appendChild(img);
+
+        // 리사이즈 핸들
+        const handle = document.createElement('div');
+        handle.className = 'img-resize-handle';
+        el.appendChild(handle);
+
+        // 리사이즈 드래그
+        handle.addEventListener('mousedown', e => {
+          e.stopPropagation(); e.preventDefault();
+          const startX = e.clientX, startY = e.clientY;
+          const origW = w.imgW, origH = w.imgH;
+          const ratio = origW / origH;
+          function onMove(ev) {
+            const dw = (ev.clientX - startX) / v2.zoom;
+            w.imgW = Math.max(40, origW + dw);
+            w.imgH = Math.round(w.imgW / ratio);
+            render2D();
+          }
+          function onUp() {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            scheduleSave();
+          }
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        });
+
+        el.addEventListener('click', e => handleWordClick2D(e, g, w));
+        el.addEventListener('mousedown', e => startDrag2D(e, g, w));
+        if (v2.mode === 'edit') {
+          el.addEventListener('click', e => { e.stopPropagation(); showImageEditPopup(g, w, el); });
+        }
+        canvas.appendChild(el);
+
+      } else {
+        // --- TEXT WORD NODE ---
+        const el = document.createElement('div');
+        el.className = 'word-node';
+        if (v2.selected.has(w.id)) el.classList.add('multi-selected');
+        el.textContent = w.text;
+        el.style.left = sx+'px'; el.style.top = sy+'px';
+        el.style.setProperty('--group-color', g.color);
+        el.dataset.wid = w.id; el.dataset.gid = g.id;
+        el.style.fontSize = Math.max(9, 13*v2.zoom)+'px';
+
+        el.addEventListener('click', e => handleWordClick2D(e, g, w));
+        el.addEventListener('mousedown', e => startDrag2D(e, g, w));
+        el.addEventListener('click', e => {
+          if (v2.mode === 'edit') { e.stopPropagation(); editWord(g, w, el); }
+        });
+        canvas.appendChild(el);
+      }
     });
   });
 }
@@ -659,10 +758,110 @@ function handleWordClick2D(e, g, w) {
   }
 }
 
-function editWord(g,w) {
-  openModal('단어 편집', w.text, v=>{
-    w.text=v; render2D(); render3D(); scheduleSave();
+// 현재 열린 편집 팝업 닫기
+let currentPopup = null;
+function closeEditPopup() {
+  if (currentPopup) { currentPopup.remove(); currentPopup = null; }
+}
+document.addEventListener('click', closeEditPopup);
+
+function editWord(g, w, anchorEl) {
+  closeEditPopup();
+  const popup = document.createElement('div');
+  popup.className = 'edit-popup';
+  popup.innerHTML = `
+    <button id="pop-edit">✏️ 텍스트 편집</button>
+    <div class="popup-sep"></div>
+    <button id="pop-delete" class="delete">🗑 단어 삭제</button>
+  `;
+  // 팝업 위치: 단어 노드 바로 아래
+  const rect = anchorEl.getBoundingClientRect();
+  const canvas = document.getElementById('canvas-2d');
+  const cr = canvas.getBoundingClientRect();
+  popup.style.left = (rect.left - cr.left) + 'px';
+  popup.style.top  = (rect.bottom - cr.top + 4) + 'px';
+  canvas.appendChild(popup);
+  currentPopup = popup;
+
+  popup.querySelector('#pop-edit').addEventListener('click', e => {
+    e.stopPropagation(); closeEditPopup();
+    openModal('단어 편집', w.text, v => {
+      w.text = v; render2D(); render3D(); scheduleSave();
+    });
   });
+  popup.querySelector('#pop-delete').addEventListener('click', e => {
+    e.stopPropagation(); closeEditPopup();
+    deleteWord(g, w);
+  });
+  popup.addEventListener('click', e => e.stopPropagation());
+}
+
+function deleteWord(g, w) {
+  // 단어 제거
+  g.words = g.words.filter(x => x.id !== w.id);
+  // 해당 단어가 포함된 2D 연결 제거
+  g.connections2d = g.connections2d.filter(c => c.a !== w.id && c.b !== w.id);
+  // 해당 단어가 포함된 3D 연결 제거
+  state.connections3d = state.connections3d.filter(c => c.aWid !== w.id && c.bWid !== w.id);
+  v2.selected.delete(w.id);
+  v3.selected.delete(w.id);
+  render2D(); render3D(); scheduleSave();
+  showToast('단어가 삭제됐습니다.');
+}
+
+function showImageEditPopup(g, w, anchorEl) {
+  closeEditPopup();
+  const popup = document.createElement('div');
+  popup.className = 'edit-popup';
+  popup.innerHTML = `<button id="pop-img-delete" class="delete">🗑 이미지 삭제</button>`;
+  const rect = anchorEl.getBoundingClientRect();
+  const canvas = document.getElementById('canvas-2d');
+  const cr = canvas.getBoundingClientRect();
+  popup.style.left = (rect.left - cr.left) + 'px';
+  popup.style.top  = (rect.bottom - cr.top + 4) + 'px';
+  canvas.appendChild(popup);
+  currentPopup = popup;
+  popup.querySelector('#pop-img-delete').addEventListener('click', e => {
+    e.stopPropagation(); closeEditPopup(); deleteWord(g, w);
+  });
+  popup.addEventListener('click', e => e.stopPropagation());
+}
+
+
+function triggerImageUpload() {
+  document.getElementById('img-upload-input').value = '';
+  document.getElementById('img-upload-input').click();
+}
+
+function handleImageUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const g = getSelectedGroup(); if (!g) return;
+    const cx = (canvasW()/2 - v2.panX)/v2.zoom + Math.random()*40-20;
+    const cy = (canvasH()/2 - v2.panY)/v2.zoom + Math.random()*40-20;
+    const id = state.nextWid++;
+    g.words.push({
+      id, text: '', x: cx, y: cy, x3: cx, y3: cy,
+      isImage: true, imgData: ev.target.result,
+      imgW: 160, imgH: 120  // 기본 크기, 이후 실제 비율로 조정
+    });
+    // 실제 이미지 크기 비율 계산
+    const img = new Image();
+    img.onload = () => {
+      const word = g.words.find(w => w.id === id);
+      if (!word) return;
+      const ratio = img.width / img.height;
+      word.imgW = 160;
+      word.imgH = Math.round(160 / ratio);
+      render2D(); render3D(); scheduleSave();
+    };
+    img.src = ev.target.result;
+    render2D(); render3D(); scheduleSave();
+    showToast('이미지가 추가됐습니다.');
+  };
+  reader.readAsDataURL(file);
 }
 
 function removeConnection2D(gid,a,b) {
@@ -950,20 +1149,38 @@ function render3D() {
     const wz=(li-(numLayers-1)/2)*v3.layerDist;
     g.words.forEach(w=>{
       const [sx,sy,sc]=project(w.x3,w.y3,wz);
-      const el=document.createElement('div');
-      el.className='word-node-3d';
-      if(v3.selected.has(w.id)) el.classList.add('multi-selected');
-      el.textContent=w.text;
-      el.style.left=sx+'px'; el.style.top=sy+'px';
-      el.style.setProperty('--group-color',g.color);
-      el.style.fontSize=Math.max(8,11*sc*v3.zoom)+'px';
-      el.style.opacity=Math.max(0.4,sc).toFixed(2);
-      el.dataset.gid=g.id; el.dataset.wid=w.id;
-      el.addEventListener('click',e=>handleWordClick3D(e,g,w,li));
-      if(v3.mode==='move') {
-        el.addEventListener('mousedown',e=>startDrag3D(e,g,w,li));
+
+      if (w.isImage) {
+        const el=document.createElement('div');
+        el.className='word-node-3d';
+        el.style.padding='0'; el.style.overflow='hidden'; el.style.borderRadius='5px';
+        if(v3.selected.has(w.id)) el.classList.add('multi-selected');
+        const iw=Math.max(30,(w.imgW||80)*0.5*sc*v3.zoom);
+        const ih=Math.max(20,(w.imgH||60)*0.5*sc*v3.zoom);
+        el.style.left=sx+'px'; el.style.top=sy+'px';
+        el.style.width=iw+'px'; el.style.height=ih+'px';
+        el.style.opacity=Math.max(0.4,sc).toFixed(2);
+        const img=document.createElement('img');
+        img.src=w.imgData; img.style.width='100%'; img.style.height='100%';
+        img.style.objectFit='cover'; img.style.pointerEvents='none';
+        el.appendChild(img);
+        el.addEventListener('click',e=>handleWordClick3D(e,g,w,li));
+        if(v3.mode==='move') el.addEventListener('mousedown',e=>startDrag3D(e,g,w,li));
+        canvas.appendChild(el);
+      } else {
+        const el=document.createElement('div');
+        el.className='word-node-3d';
+        if(v3.selected.has(w.id)) el.classList.add('multi-selected');
+        el.textContent=w.text;
+        el.style.left=sx+'px'; el.style.top=sy+'px';
+        el.style.setProperty('--group-color',g.color);
+        el.style.fontSize=Math.max(8,11*sc*v3.zoom)+'px';
+        el.style.opacity=Math.max(0.4,sc).toFixed(2);
+        el.dataset.gid=g.id; el.dataset.wid=w.id;
+        el.addEventListener('click',e=>handleWordClick3D(e,g,w,li));
+        if(v3.mode==='move') el.addEventListener('mousedown',e=>startDrag3D(e,g,w,li));
+        canvas.appendChild(el);
       }
-      canvas.appendChild(el);
     });
   });
 }
