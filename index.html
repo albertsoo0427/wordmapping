@@ -356,6 +356,44 @@
   }
   .img-node:hover .img-resize-handle,
   .img-node.selected-edit .img-resize-handle { opacity: 1; }
+
+  /* Inspect panel */
+  #inspect-panel {
+    position: absolute; right: 12px; top: 56px; z-index: 10;
+    background: rgba(18,18,26,0.95); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px; width: 210px;
+    backdrop-filter: blur(12px);
+    display: none;
+  }
+  #inspect-panel.visible { display: block; }
+  .inspect-title {
+    font-size: 10px; color: var(--text-dim); letter-spacing: .08em;
+    text-transform: uppercase; margin-bottom: 10px;
+  }
+  #inspect-word-name {
+    font-size: 14px; font-weight: 600; color: var(--text);
+    margin-bottom: 10px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--border); min-height: 20px;
+  }
+  .inspect-conn-item {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 7px 0; border-bottom: 1px solid var(--border);
+    font-size: 11px; line-height: 1.5;
+  }
+  .inspect-conn-item:last-child { border-bottom: none; }
+  .inspect-layer-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; margin-top:3px; }
+  .inspect-conn-text { color: var(--text-dim); }
+  .inspect-conn-text strong { color: var(--text); font-weight:500; }
+  .inspect-empty { font-size:11px; color:var(--text-dim); text-align:center; padding:14px 0; }
+  .inspect-same-group { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+  .inspect-section-label { font-size:9px; color:var(--text-dim); letter-spacing:.06em; text-transform:uppercase; margin-bottom:4px; }
+
+  /* 연결선/노드 강조 */
+  .conn-line-highlight { stroke:#fff !important; stroke-width:2.5 !important; opacity:0.9 !important; stroke-dasharray:none !important; }
+  .conn-line-dim { opacity:0.04 !important; }
+  .conn-line-same-highlight { opacity:0.7 !important; stroke-width:2 !important; }
+  .node-highlight { border-color:#fff !important; box-shadow:0 0 0 2px #fff, 0 0 14px rgba(255,255,255,0.35) !important; z-index:10 !important; }
+  .node-dim { opacity:0.12 !important; }
 </style>
 </head>
 <body>
@@ -414,6 +452,7 @@
       <button class="btn" id="btn-observe-3d" onclick="setMode3D('observe')">관찰 모드</button>
       <button class="btn" id="btn-connect-3d" onclick="setMode3D('connect')">연결 모드</button>
       <button class="btn" id="btn-move-3d" onclick="setMode3D('move')">이동 모드</button>
+      <button class="btn" id="btn-inspect-3d" onclick="setMode3D('inspect')">🔍 연결 확인</button>
     </div>
   </div>
 
@@ -433,6 +472,13 @@
     <div class="dist-label">레이어 간격</div>
     <input type="range" id="dist-slider" min="60" max="300" value="140" oninput="onDistChange()">
     <div style="font-size:10px;color:var(--text-dim);margin-top:4px;" id="dist-val">140 px</div>
+  </div>
+
+  <!-- Inspect panel -->
+  <div id="inspect-panel">
+    <div class="inspect-title">🔍 연결 확인</div>
+    <div id="inspect-word-name">단어를 클릭하세요</div>
+    <div id="inspect-list"></div>
   </div>
 </div>
 
@@ -467,7 +513,7 @@ let state = {
 // 2D view state
 let v2 = { panX:0, panY:0, zoom:1, mode:'observe', connectFirst:null, selected: new Set() };
 // 3D view state  
-let v3 = { panX:0, panY:0, zoom:1, rotX:-20, rotY:0, mode:'observe', connectFirst:null, layerDist:140, selected: new Set() };
+let v3 = { panX:0, panY:0, zoom:1, rotX:-20, rotY:0, mode:'observe', connectFirst:null, layerDist:140, selected: new Set(), inspectWid: null, inspectGid: null };
 
 // ========================
 // GROUP MANAGEMENT
@@ -1095,6 +1141,26 @@ function render3D() {
     svg.appendChild(text);
   });
 
+  // inspect 모드: 선택된 단어와 연결된 wid set 계산
+  const inspecting = v3.mode === 'inspect' && v3.inspectWid !== null;
+  const inspectLinkedWids = new Set();
+  const inspectSameGroupWids = new Set();
+  if (inspecting) {
+    const iWid = Number(v3.inspectWid);
+    const iGid = Number(v3.inspectGid);
+    state.connections3d.forEach(c => {
+      if (Number(c.aWid) === iWid) inspectLinkedWids.add(Number(c.bWid));
+      if (Number(c.bWid) === iWid) inspectLinkedWids.add(Number(c.aWid));
+    });
+    const iGrp = state.groups.find(g => Number(g.id) === iGid);
+    if (iGrp) {
+      iGrp.connections2d.forEach(c => {
+        if (Number(c.a) === iWid) inspectSameGroupWids.add(Number(c.b));
+        if (Number(c.b) === iWid) inspectSameGroupWids.add(Number(c.a));
+      });
+    }
+  }
+
   // Draw 3D connections between layers
   state.connections3d.forEach(c=>{
     const ga=state.groups.find(g=>g.id===c.aGid);
@@ -1111,10 +1177,28 @@ function render3D() {
     const line=document.createElementNS(svgNS,'line');
     line.setAttribute('x1',ax);line.setAttribute('y1',ay);
     line.setAttribute('x2',bx);line.setAttribute('y2',by);
-    line.setAttribute('stroke','#fff');
-    line.setAttribute('stroke-width','1');
-    line.setAttribute('stroke-dasharray','5,4');
-    line.setAttribute('opacity','0.3');
+
+    if (inspecting) {
+      const isHighlight = Number(c.aWid)===Number(v3.inspectWid) || Number(c.bWid)===Number(v3.inspectWid);
+      if (isHighlight) {
+        line.setAttribute('stroke','#fff');
+        line.setAttribute('stroke-width','2.5');
+        line.setAttribute('opacity','0.95');
+        line.setAttribute('stroke-dasharray','none');
+        line.style.filter='drop-shadow(0 0 5px rgba(255,255,255,0.7))';
+      } else {
+        line.setAttribute('stroke','#fff');
+        line.setAttribute('stroke-width','1');
+        line.setAttribute('stroke-dasharray','5,4');
+        line.setAttribute('opacity','0.04');
+      }
+    } else {
+      line.setAttribute('stroke','#fff');
+      line.setAttribute('stroke-width','1');
+      line.setAttribute('stroke-dasharray','5,4');
+      line.setAttribute('opacity','0.3');
+    }
+
     if(v3.mode==='connect') {
       line.style.pointerEvents='all'; line.style.cursor='pointer';
       line.addEventListener('click',()=>{
@@ -1137,9 +1221,21 @@ function render3D() {
       const line=document.createElementNS(svgNS,'line');
       line.setAttribute('x1',ax);line.setAttribute('y1',ay);
       line.setAttribute('x2',bx);line.setAttribute('y2',by);
-      line.setAttribute('stroke',g.color);
-      line.setAttribute('stroke-width','1.5');
-      line.setAttribute('opacity','0.5');
+
+      if (inspecting && Number(g.id) === Number(v3.inspectGid)) {
+        const isHighlight = Number(conn.a)===Number(v3.inspectWid) || Number(conn.b)===Number(v3.inspectWid);
+        line.setAttribute('stroke', g.color);
+        line.setAttribute('stroke-width', isHighlight ? '2.5' : '1');
+        line.setAttribute('opacity', isHighlight ? '0.9' : '0.08');
+      } else if (inspecting) {
+        line.setAttribute('stroke',g.color);
+        line.setAttribute('stroke-width','1');
+        line.setAttribute('opacity','0.06');
+      } else {
+        line.setAttribute('stroke',g.color);
+        line.setAttribute('stroke-width','1.5');
+        line.setAttribute('opacity','0.5');
+      }
       svg.appendChild(line);
     });
   });
@@ -1159,7 +1255,12 @@ function render3D() {
         const ih=Math.max(20,(w.imgH||60)*0.5*sc*v3.zoom);
         el.style.left=sx+'px'; el.style.top=sy+'px';
         el.style.width=iw+'px'; el.style.height=ih+'px';
-        el.style.opacity=Math.max(0.4,sc).toFixed(2);
+        // inspect 강조
+        if (inspecting) {
+          if (Number(w.id)===Number(v3.inspectWid)) { el.classList.add('node-highlight'); el.style.opacity='1'; }
+          else if (inspectLinkedWids.has(Number(w.id))) { el.classList.add('node-highlight'); el.style.opacity='0.95'; }
+          else { el.classList.add('node-dim'); }
+        } else { el.style.opacity=Math.max(0.4,sc).toFixed(2); }
         const img=document.createElement('img');
         img.src=w.imgData; img.style.width='100%'; img.style.height='100%';
         img.style.objectFit='cover'; img.style.pointerEvents='none';
@@ -1175,7 +1276,12 @@ function render3D() {
         el.style.left=sx+'px'; el.style.top=sy+'px';
         el.style.setProperty('--group-color',g.color);
         el.style.fontSize=Math.max(8,11*sc*v3.zoom)+'px';
-        el.style.opacity=Math.max(0.4,sc).toFixed(2);
+        // inspect 강조
+        if (inspecting) {
+          if (Number(w.id)===Number(v3.inspectWid)) { el.classList.add('node-highlight'); el.style.opacity='1'; el.style.borderColor='#fff'; }
+          else if (inspectLinkedWids.has(Number(w.id))||inspectSameGroupWids.has(Number(w.id))) { el.classList.add('node-highlight'); el.style.opacity='0.95'; }
+          else { el.classList.add('node-dim'); }
+        } else { el.style.opacity=Math.max(0.4,sc).toFixed(2); }
         el.dataset.gid=g.id; el.dataset.wid=w.id;
         el.addEventListener('click',e=>handleWordClick3D(e,g,w,li));
         if(v3.mode==='move') el.addEventListener('mousedown',e=>startDrag3D(e,g,w,li));
@@ -1186,6 +1292,18 @@ function render3D() {
 }
 
 function handleWordClick3D(e,g,w,li) {
+  if(v3.mode==='inspect') {
+    e.stopPropagation();
+    if(v3.inspectWid===w.id && v3.inspectGid===g.id) {
+      // 같은 단어 다시 클릭 → 선택 해제
+      v3.inspectWid=null; v3.inspectGid=null;
+    } else {
+      v3.inspectWid = Number(w.id);
+      v3.inspectGid = Number(g.id);
+    }
+    render3D(); updateInspectPanel();
+    return;
+  }
   if(v3.mode==='move') {
     if(e.shiftKey) {
       if(v3.selected.has(w.id)) v3.selected.delete(w.id);
@@ -1268,6 +1386,29 @@ canvas3d.addEventListener('mousedown',e=>{
   lastMouse3D={x:e.clientX,y:e.clientY};
   const isCmd=e.metaKey||e.ctrlKey;
 
+  // inspect 모드: 빈 곳 클릭 시 선택 해제, ⌘+드래그로 회전은 항상 허용
+  if(v3.mode==='inspect') {
+    if(isCmd) {
+      // ⌘+드래그 회전
+      canvas3d.classList.add('grabbing');
+      function onMoveInspect(ev) {
+        v3.rotY+=(ev.clientX-lastMouse3D.x)*0.4;
+        v3.rotX+=(ev.clientY-lastMouse3D.y)*0.4;
+        v3.rotX=Math.max(-80,Math.min(80,v3.rotX));
+        lastMouse3D={x:ev.clientX,y:ev.clientY};
+        render3D();
+      }
+      function onUpInspect(){canvas3d.classList.remove('grabbing');document.removeEventListener('mousemove',onMoveInspect);document.removeEventListener('mouseup',onUpInspect);}
+      document.addEventListener('mousemove',onMoveInspect);
+      document.addEventListener('mouseup',onUpInspect);
+    } else {
+      // 빈 곳 클릭 → 선택 해제 (단어 클릭은 handleWordClick3D가 stopPropagation으로 처리)
+      v3.inspectWid=null; v3.inspectGid=null;
+      render3D(); updateInspectPanel();
+    }
+    return;
+  }
+
   if(v3.mode!=='observe'&&!isCmd) return;
 
   canvas3d.classList.add('grabbing');
@@ -1297,16 +1438,90 @@ canvas3d.addEventListener('wheel',e=>{
   render3D();
 },{passive:false});
 
+function updateInspectPanel() {
+  const panel = document.getElementById('inspect-panel');
+  const nameEl = document.getElementById('inspect-word-name');
+  const listEl = document.getElementById('inspect-list');
+
+  if (v3.mode !== 'inspect') { panel.classList.remove('visible'); return; }
+  panel.classList.add('visible');
+
+  if (v3.inspectWid === null) {
+    nameEl.textContent = '단어를 클릭하세요';
+    listEl.innerHTML = '';
+    return;
+  }
+
+  const iGrp = state.groups.find(g=>Number(g.id)===Number(v3.inspectGid));
+  const iWord = iGrp?.words.find(w=>Number(w.id)===Number(v3.inspectWid));
+  if (!iWord) return;
+
+  nameEl.innerHTML = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${iGrp.color};margin-right:6px;vertical-align:middle;"></span>${iWord.text || '(이미지)'}`;
+
+  // 3D 연결 목록
+  const cross = state.connections3d.filter(c=>Number(c.aWid)===Number(v3.inspectWid)||Number(c.bWid)===Number(v3.inspectWid));
+  // 같은 그룹 내 연결
+  const same = iGrp.connections2d.filter(c=>Number(c.a)===Number(v3.inspectWid)||Number(c.b)===Number(v3.inspectWid));
+
+  let html = '';
+
+  if (cross.length > 0) {
+    html += `<div class="inspect-section-label" style="margin-bottom:6px;">레이어 간 연결 (${cross.length})</div>`;
+    cross.forEach(c=>{
+      const isA = Number(c.aWid)===Number(v3.inspectWid);
+      const otherGid = isA ? c.bGid : c.aGid;
+      const otherWid = isA ? c.bWid : c.aWid;
+      const otherGrp = state.groups.find(g=>Number(g.id)===Number(otherGid));
+      const otherWord = otherGrp?.words.find(w=>Number(w.id)===Number(otherWid));
+      if (!otherGrp||!otherWord) return;
+      html += `
+        <div class="inspect-conn-item">
+          <div class="inspect-layer-dot" style="background:${otherGrp.color}"></div>
+          <div class="inspect-conn-text">
+            <strong>${otherWord.text||'(이미지)'}</strong>
+            <div style="font-size:10px;margin-top:1px;">${otherGrp.name}</div>
+          </div>
+        </div>`;
+    });
+  }
+
+  if (same.length > 0) {
+    html += `<div class="inspect-section-label" style="margin-top:10px;margin-bottom:6px;">같은 레이어 연결 (${same.length})</div>`;
+    same.forEach(c=>{
+      const otherWid = Number(c.a)===Number(v3.inspectWid) ? c.b : c.a;
+      const otherWord = iGrp.words.find(w=>Number(w.id)===Number(otherWid));
+      if (!otherWord) return;
+      html += `
+        <div class="inspect-conn-item">
+          <div class="inspect-layer-dot" style="background:${iGrp.color}"></div>
+          <div class="inspect-conn-text">
+            <strong>${otherWord.text||'(이미지)'}</strong>
+            <div style="font-size:10px;margin-top:1px;">${iGrp.name}</div>
+          </div>
+        </div>`;
+    });
+  }
+
+  if (cross.length===0 && same.length===0) {
+    html = `<div class="inspect-empty">연결된 단어가 없습니다</div>`;
+  }
+
+  listEl.innerHTML = html;
+}
+
 function setMode3D(m) {
   v3.mode=m; v3.connectFirst=null; v3.selected.clear();
+  v3.inspectWid=null; v3.inspectGid=null;
   document.querySelectorAll('[id^="btn-"][id$="-3d"]').forEach(b=>b.classList.remove('active'));
   document.getElementById('btn-'+m+'-3d')?.classList.add('active');
   const hints={
     observe:'관찰: 드래그 이동 · 스크롤 줌 · ⌘+드래그 360° 회전',
     connect:'연결 모드: 두 단어를 클릭하여 연결',
-    move:'이동 모드: 클릭 선택 · Shift+클릭 다중 선택 · 드래그로 이동'
+    move:'이동 모드: 클릭 선택 · Shift+클릭 다중 선택 · 드래그로 이동',
+    inspect:'🔍 연결 확인: 단어를 클릭하면 연결 관계가 표시됩니다'
   };
   document.getElementById('hint-3d').textContent=hints[m]||'';
+  updateInspectPanel();
   render3D();
 }
 
@@ -1340,7 +1555,7 @@ function switchPage(p) {
   document.getElementById('page-'+p).classList.add('active');
   document.querySelectorAll('.nav-tab')[p==='2d'?0:1].classList.add('active');
   if(p==='2d') render2D();
-  else { render3D(); renderLayerPanel(); }
+  else { render3D(); renderLayerPanel(); updateInspectPanel(); }
 }
 
 // ========================
@@ -1393,18 +1608,26 @@ function toArray(val) {
 function applyPayload(saved) {
   const groups = toArray(saved.groups).map(g => ({
     ...g,
+    id: Number(g.id),
     words: toArray(g.words).map(w => ({
       ...w,
+      id: Number(w.id),
       x3: w.x3 !== undefined ? w.x3 : w.x,
       y3: w.y3 !== undefined ? w.y3 : w.y,
     })),
-    connections2d: toArray(g.connections2d),
+    connections2d: toArray(g.connections2d).map(c => ({
+      a: Number(c.a),
+      b: Number(c.b),
+    })),
   }));
 
   state.groups        = groups;
-  state.nextGid       = saved.nextGid || 1;
-  state.nextWid       = saved.nextWid || 1;
-  state.connections3d = toArray(saved.connections3d);
+  state.nextGid       = Number(saved.nextGid) || 1;
+  state.nextWid       = Number(saved.nextWid) || 1;
+  state.connections3d = toArray(saved.connections3d).map(c => ({
+    aGid: Number(c.aGid), aWid: Number(c.aWid),
+    bGid: Number(c.bGid), bWid: Number(c.bWid),
+  }));
 
   if (saved.layerDist) {
     v3.layerDist = saved.layerDist;
